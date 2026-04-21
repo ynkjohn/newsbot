@@ -1,9 +1,9 @@
-import asyncio
 """Tests for WhatsApp sender with retry logic."""
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from requests.exceptions import Timeout, ConnectionError
 import requests
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from requests.exceptions import ConnectionError, Timeout
 
 from delivery.whatsapp_sender import _send_whatsapp_message, send_digest
 from db.models import Subscriber, Summary

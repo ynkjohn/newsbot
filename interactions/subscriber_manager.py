@@ -4,6 +4,13 @@ from sqlalchemy import select
 from config.settings import settings
 from db.engine import async_session
 from db.models import Subscriber
+from interactions.messages import (
+    already_subscribed,
+    not_subscribed,
+    subscribe_confirmation,
+    subscribe_reactivated,
+    unsubscribe_confirmation,
+)
 
 logger = structlog.get_logger()
 
@@ -42,25 +49,18 @@ async def subscribe(phone_number: str) -> str:
         sched = settings.pipeline_schedule_display_br
 
         if subscriber and subscriber.active:
-            return (
-                f"Voce ja esta inscrito! Recebera os resumos 4x ao dia nos horarios: {sched}."
-            )
+            return already_subscribed(sched)
 
         if subscriber:
             subscriber.active = True
             await session.commit()
-            return (
-                f"Inscricao reativada! Voce recebera os resumos 4x ao dia nos horarios: {sched}."
-            )
+            return subscribe_reactivated(sched)
 
         subscriber = Subscriber(phone_number=phone_number, active=True)
         session.add(subscriber)
         await session.commit()
         logger.info(f"New subscription: {phone_number}")
-        return (
-            f"Inscricao confirmada! Voce recebera resumos de noticias 4x ao dia nos horarios: {sched}.\n"
-            "Comandos: !politica !economia !cripto !geopolitica !tech !hoje"
-        )
+        return subscribe_confirmation(sched)
 
 
 async def unsubscribe(phone_number: str) -> str:
@@ -72,12 +72,12 @@ async def unsubscribe(phone_number: str) -> str:
         subscriber = result.scalar_one_or_none()
 
         if not subscriber or not subscriber.active:
-            return "Voce nao esta inscrito."
+            return not_subscribed()
 
         subscriber.active = False
         await session.commit()
         logger.info(f"Unsubscribed: {phone_number}")
-        return "Inscricao cancelada. Para reativar, envie !start"
+        return unsubscribe_confirmation()
 
 
 async def is_subscribed(phone_number: str) -> bool:

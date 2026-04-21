@@ -95,7 +95,7 @@ class LLMClient:
                     logger.error(f"LLM timeout after {max_retries} attempts")
                     raise
                     
-            except RateLimitError as e:
+            except RateLimitError:
                 # Rate limit - retry with longer backoff
                 if attempt < max_retries:
                     wait_time = backoff_base * (2 ** attempt)  # Exponential increase

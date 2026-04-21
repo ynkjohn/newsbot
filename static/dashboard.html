@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NewsBot Control</title>
+    <title>NewsBot</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -36,11 +36,7 @@
       }
 
       * { box-sizing: border-box; }
-
-      html,
-      body {
-        height: 100%;
-      }
+      html, body { height: 100%; }
 
       body {
         margin: 0;
@@ -53,10 +49,7 @@
           radial-gradient(at 100% 100%, #1e1b4b 0, transparent 50%);
       }
 
-      button,
-      input {
-        font: inherit;
-      }
+      button, input { font: inherit; }
 
       .mesh-bg {
         position: fixed;
@@ -67,8 +60,7 @@
         pointer-events: none;
       }
 
-      .mesh-1,
-      .mesh-2 {
+      .mesh-1, .mesh-2 {
         position: absolute;
         width: 48%;
         height: 48%;
@@ -79,47 +71,12 @@
         top: -10%;
         left: -10%;
         background: rgba(251, 191, 36, 0.05);
-        animation: float 20s infinite alternate;
       }
 
       .mesh-2 {
         right: -10%;
         bottom: -10%;
         background: rgba(79, 209, 197, 0.05);
-        animation: float 25s infinite alternate-reverse;
-      }
-
-      @keyframes float {
-        from { transform: translate(0, 0); }
-        to { transform: translate(10%, 10%); }
-      }
-
-      @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(8px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-
-      @keyframes tapPulse {
-        0% { box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
-        55% { box-shadow: 0 0 0 7px rgba(251, 191, 36, 0.08); }
-        100% { box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
-      }
-
-      @keyframes summaryRipple {
-        0% {
-          opacity: 0.95;
-          transform: translate(-50%, -50%) scale(0);
-        }
-        100% {
-          opacity: 0;
-          transform: translate(-50%, -50%) scale(17);
-        }
-      }
-
-      @keyframes summaryPress {
-        0% { transform: scale(1); }
-        36% { transform: scale(0.985); }
-        100% { transform: scale(1); }
       }
 
       .app-shell {
@@ -188,8 +145,16 @@
       .cat-nav-btn,
       .sort-chip,
       .period-chip,
-      .drawer-close {
-        transition: transform 0.18s ease, background 0.22s ease, border-color 0.22s ease, color 0.22s ease, box-shadow 0.22s ease;
+      .status-chip,
+      .source-chip,
+      .drawer-close,
+      .metric-card {
+        transition:
+          transform 0.18s ease,
+          background 0.22s ease,
+          border-color 0.22s ease,
+          color 0.22s ease,
+          box-shadow 0.22s ease;
       }
 
       .nav-btn {
@@ -264,7 +229,7 @@
         gap: 8px;
         border: 1px solid var(--line);
         border-radius: 11px;
-        background: rgba(255,255,255,0.05);
+        background: rgba(255, 255, 255, 0.05);
         color: var(--text);
         font-weight: 600;
         cursor: pointer;
@@ -273,17 +238,13 @@
       .btn-premium:hover,
       .sort-chip:hover,
       .period-chip:hover,
+      .status-chip:hover,
+      .source-chip:hover,
       .cat-nav-btn:hover,
-      .drawer-close:hover {
-        background: rgba(255,255,255,0.08);
+      .drawer-close:hover,
+      .metric-card:hover {
+        background: rgba(255, 255, 255, 0.08);
         border-color: var(--line-strong);
-      }
-
-      .btn-premium:disabled,
-      .btn-action-large:disabled {
-        opacity: 0.56;
-        cursor: not-allowed;
-        transform: none;
       }
 
       .view-content {
@@ -295,7 +256,8 @@
         display: flex;
         flex: 1;
         min-height: 0;
-        animation: fadeIn 0.32s ease;
+        overflow: auto;
+        padding-right: 2px;
       }
 
       #view-ops {
@@ -337,9 +299,25 @@
       .metric-card {
         min-height: 118px;
         padding: 18px 18px 16px;
+        position: relative;
+        overflow: hidden;
         border: 1px solid var(--line);
         border-radius: var(--radius-card);
         background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .metric-card.is-highlight {
+        border-color: var(--accent-soft);
+      }
+
+      .metric-card.is-danger {
+        border-color: rgba(248, 113, 113, 0.28);
+      }
+
+      .metric-card.is-warn {
+        border-color: rgba(251, 191, 36, 0.28);
       }
 
       .metric-label {
@@ -357,6 +335,13 @@
         line-height: 1;
       }
 
+      .metric-meta {
+        margin-top: 10px;
+        color: var(--text-dim);
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+
       .countdown-label {
         display: block;
         margin-top: 8px;
@@ -372,10 +357,14 @@
         min-height: 0;
       }
 
-      .report-panel,
-      .actions-panel {
+      .report-panel, .actions-panel {
         min-height: 0;
         padding: 18px;
+      }
+
+      .report-panel {
+        display: flex;
+        flex-direction: column;
       }
 
       .panel-heading {
@@ -417,6 +406,18 @@
         border: 1px solid var(--line);
         border-radius: 16px;
         background: rgba(255,255,255,0.02);
+        cursor: pointer;
+        transition:
+          transform 0.18s ease,
+          border-color 0.22s ease,
+          background 0.22s ease,
+          box-shadow 0.22s ease;
+      }
+
+      .ops-report-item:hover {
+        transform: translateY(-1px);
+        border-color: var(--line-glow);
+        background: rgba(255,255,255,0.04);
       }
 
       .ops-report-item span {
@@ -440,11 +441,16 @@
         line-height: 1.5;
       }
 
-      .timeline-block {
+      .timeline-block, .feed-block {
         margin-top: 16px;
         display: flex;
         flex-direction: column;
         gap: 10px;
+      }
+
+      .timeline-block.runs-block {
+        flex: 1;
+        min-height: 0;
       }
 
       .section-kicker {
@@ -457,6 +463,13 @@
       .run-timeline {
         display: grid;
         gap: 10px;
+      }
+
+      #recentRuns {
+        min-height: 0;
+        max-height: min(42vh, 420px);
+        overflow: auto;
+        padding-right: 4px;
       }
 
       .run-item {
@@ -477,10 +490,7 @@
         flex-wrap: wrap;
       }
 
-      .run-title-row strong {
-        font-size: 0.94rem;
-      }
-
+      .run-title-row strong { font-size: 0.94rem; }
       .run-time {
         display: block;
         margin-top: 4px;
@@ -492,6 +502,83 @@
         color: var(--text-dim);
         font-size: 0.76rem;
         text-align: right;
+        line-height: 1.45;
+      }
+
+      .mini-timeline {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .mini-slot {
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255,255,255,0.02);
+      }
+
+      .mini-slot.is-current {
+        border-color: var(--accent-soft);
+        box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.12);
+      }
+
+      .mini-slot.is-completed {
+        background: linear-gradient(135deg, rgba(74,222,128,0.09) 0%, rgba(255,255,255,0.02) 100%);
+      }
+
+      .mini-slot.is-running,
+      .mini-slot.is-upcoming,
+      .mini-slot.is-pending {
+        background: linear-gradient(135deg, rgba(251,191,36,0.08) 0%, rgba(255,255,255,0.02) 100%);
+      }
+
+      .mini-slot.is-failed {
+        background: linear-gradient(135deg, rgba(248,113,113,0.08) 0%, rgba(255,255,255,0.02) 100%);
+      }
+
+      .mini-slot strong {
+        display: block;
+        font-size: 0.9rem;
+      }
+
+      .mini-slot small {
+        display: block;
+        margin-top: 6px;
+        color: var(--text-soft);
+      }
+
+      .mini-slot p {
+        margin: 10px 0 0;
+        color: var(--text-dim);
+        font-size: 0.8rem;
+        line-height: 1.45;
+      }
+
+      .feed-item {
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.02);
+      }
+
+      .feed-item strong {
+        display: block;
+        font-size: 0.92rem;
+      }
+
+      .feed-item span {
+        display: block;
+        margin-top: 6px;
+        color: var(--text-soft);
+        font-size: 0.76rem;
+      }
+
+      .feed-item p {
+        margin: 8px 0 0;
+        color: var(--danger);
+        font-size: 0.8rem;
+        line-height: 1.45;
       }
 
       .btn-action-large {
@@ -523,9 +610,7 @@
         font-size: 0.74rem;
       }
 
-      #view-reading {
-        min-height: 0;
-      }
+      #view-reading { min-height: 0; }
 
       .reading-shell {
         flex: 1;
@@ -602,6 +687,9 @@
       }
 
       .reading-toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 12;
         padding: 14px;
         display: flex;
         flex-direction: column;
@@ -642,10 +730,6 @@
         color: var(--text);
       }
 
-      .search-box input::placeholder {
-        color: var(--text-soft);
-      }
-
       .toolbar-bottom {
         display: flex;
         align-items: center;
@@ -662,14 +746,18 @@
       }
 
       .segmented-control,
-      .period-control {
+      .period-control,
+      .status-control,
+      .source-control {
         display: inline-flex;
         gap: 8px;
         flex-wrap: wrap;
       }
 
       .sort-chip,
-      .period-chip {
+      .period-chip,
+      .status-chip,
+      .source-chip {
         min-height: 36px;
         padding: 0 12px;
         border: 1px solid var(--line);
@@ -680,7 +768,9 @@
       }
 
       .sort-chip.is-active,
-      .period-chip.is-active {
+      .period-chip.is-active,
+      .status-chip.is-active,
+      .source-chip.is-active {
         background: rgba(251, 191, 36, 0.1);
         border-color: var(--accent-soft);
         color: var(--accent);
@@ -756,42 +846,14 @@
         transform: translateY(-1px);
       }
 
-      .summary-card:focus-visible {
-        outline: 2px solid var(--accent-soft);
-        outline-offset: 2px;
-      }
-
       .summary-card.is-selected {
         border-color: rgba(251, 191, 36, 0.45);
         background: linear-gradient(135deg, rgba(251,191,36,0.08) 0%, rgba(255,255,255,0.02) 100%);
         box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.08), 0 16px 28px rgba(0, 0, 0, 0.28);
       }
 
-      .summary-card.is-pressed {
-        transform: scale(0.992);
-      }
-
-      .summary-card.is-opening {
-        animation: summaryPress 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
-      }
-
-      .summary-card::after {
-        content: "";
-        position: absolute;
-        left: var(--tap-x, 50%);
-        top: var(--tap-y, 50%);
-        width: 18px;
-        height: 18px;
-        border-radius: 999px;
-        background: radial-gradient(circle, rgba(251, 191, 36, 0.38) 0%, rgba(251, 191, 36, 0.16) 42%, rgba(251, 191, 36, 0) 72%);
-        transform: translate(-50%, -50%) scale(0);
-        opacity: 0;
-        pointer-events: none;
-      }
-
-      .summary-card.is-opening::after {
-        opacity: 1;
-        animation: summaryRipple 0.34s ease-out forwards;
+      .summary-card.is-pending {
+        border-color: rgba(251, 191, 36, 0.28);
       }
 
       .summary-card-meta {
@@ -821,7 +883,7 @@
         color: var(--text-dim);
         font-size: 0.92rem;
         line-height: 1.52;
-        -webkit-line-clamp: 2;
+        -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
       }
 
@@ -829,12 +891,13 @@
         display: flex;
         align-items: center;
         gap: 8px;
+        flex-wrap: wrap;
         margin-top: 12px;
         color: var(--text-soft);
         font-size: 0.76rem;
       }
 
-      .empty-state {
+      .empty-state, .skeleton-state {
         padding: 40px 24px;
         border: 1px dashed rgba(255, 255, 255, 0.12);
         border-radius: 18px;
@@ -895,10 +958,6 @@
         border-bottom: 1px solid var(--line);
       }
 
-      .drawer-header-copy {
-        min-width: 0;
-      }
-
       .drawer-meta {
         margin: 10px 0 0;
         color: var(--text-soft);
@@ -942,10 +1001,6 @@
         gap: 10px;
       }
 
-      .drawer-section[hidden] {
-        display: none;
-      }
-
       .drawer-section-label {
         color: var(--accent);
         font-size: 0.66rem;
@@ -972,15 +1027,22 @@
         line-height: 1.58;
       }
 
-      .drawer-summary-text {
-        display: grid;
-        gap: 12px;
-        color: var(--text-dim);
-        line-height: 1.62;
+      .drawer-text-block {
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255,255,255,0.02);
       }
 
-      .drawer-summary-text p {
+      .drawer-text-block strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .drawer-text-block p {
         margin: 0;
+        color: var(--text-dim);
+        line-height: 1.62;
       }
 
       .drawer-source-list {
@@ -995,15 +1057,44 @@
         word-break: break-word;
       }
 
-      .nav-btn:active,
-      .btn-premium:active,
-      .btn-action-large:active,
-      .cat-nav-btn:active,
-      .sort-chip:active,
-      .period-chip:active,
-      .drawer-close:active {
-        animation: tapPulse 0.22s ease;
-        transform: scale(0.97);
+      .view-content.active::-webkit-scrollbar,
+      #recentRuns::-webkit-scrollbar,
+      .summary-list::-webkit-scrollbar,
+      .drawer-body::-webkit-scrollbar {
+        width: 10px;
+      }
+
+      .view-content.active::-webkit-scrollbar-thumb,
+      #recentRuns::-webkit-scrollbar-thumb,
+      .summary-list::-webkit-scrollbar-thumb,
+      .drawer-body::-webkit-scrollbar-thumb {
+        border: 2px solid transparent;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.24);
+        background-clip: padding-box;
+      }
+
+      .view-content.active::-webkit-scrollbar-track,
+      #recentRuns::-webkit-scrollbar-track,
+      .summary-list::-webkit-scrollbar-track,
+      .drawer-body::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .nav-btn:focus-visible,
+      .btn-premium:focus-visible,
+      .btn-action-large:focus-visible,
+      .cat-nav-btn:focus-visible,
+      .sort-chip:focus-visible,
+      .period-chip:focus-visible,
+      .status-chip:focus-visible,
+      .source-chip:focus-visible,
+      .drawer-close:focus-visible,
+      .metric-card:focus-visible,
+      .summary-card:focus-visible,
+      .ops-report-item:focus-visible {
+        outline: 2px solid rgba(251, 191, 36, 0.65);
+        outline-offset: 2px;
       }
 
       #toast {
@@ -1031,70 +1122,24 @@
         color: var(--danger);
       }
 
-      .spin {
-        display: inline-block;
-        animation: spin 1s linear infinite;
-      }
-
-      @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-      }
-
       @media (max-width: 1024px) {
-        body {
-          overflow: auto;
-        }
-
-        .app-shell {
-          height: auto;
-          min-height: 100vh;
-        }
-
-        .topbar {
-          flex-wrap: wrap;
-        }
-
-        .metrics-row {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .ops-grid,
-        .reading-shell {
-          grid-template-columns: 1fr;
-        }
-
-        .summary-list-panel {
-          height: auto;
-        }
+        body { overflow: auto; }
+        .app-shell { height: auto; min-height: 100vh; }
+        .topbar { flex-wrap: wrap; }
+        .metrics-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .ops-grid, .reading-shell { grid-template-columns: 1fr; }
+        .summary-list-panel { height: auto; }
+        #recentRuns { max-height: none; overflow: visible; padding-right: 0; }
       }
 
       @media (max-width: 720px) {
-        .app-shell {
-          padding: 12px;
-        }
-
-        .topbar-meta {
-          width: 100%;
-          flex-wrap: wrap;
-        }
-
-        .metrics-row,
-        .ops-report-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .toolbar-bottom,
-        .toolbar-group,
-        .list-head {
-          align-items: stretch;
-        }
-
-        .toolbar-group,
-        .list-stats {
-          justify-content: flex-start;
-        }
-
+        .app-shell { padding: 12px; }
+        .topbar-meta { width: 100%; flex-wrap: wrap; }
+        .metrics-row, .ops-report-grid, .mini-timeline { grid-template-columns: 1fr; }
+        .toolbar-bottom, .toolbar-group, .list-head { align-items: stretch; }
+        .toolbar-group, .list-stats { justify-content: flex-start; }
+        .run-item { grid-template-columns: 1fr; }
+        .run-metrics { text-align: left; }
         .summary-drawer {
           top: auto;
           right: 0;
@@ -1105,24 +1150,7 @@
           border-radius: 22px 22px 0 0;
           transform: translateY(106%);
         }
-
-        .summary-drawer.is-open {
-          transform: translateY(0);
-        }
-
-        .drawer-body {
-          padding-bottom: 26px;
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        *,
-        *::before,
-        *::after {
-          animation: none !important;
-          transition: none !important;
-          scroll-behavior: auto !important;
-        }
+        .summary-drawer.is-open { transform: translateY(0); }
       }
     </style>
   </head>
@@ -1136,7 +1164,7 @@
       <header class="topbar glass-panel">
         <div class="brand">
           <div class="brand-mark">NB</div>
-          <h1>NewsBot Room</h1>
+          <h1>NewsBot</h1>
         </div>
 
         <nav class="nav-group" aria-label="Seções da dashboard">
@@ -1147,6 +1175,7 @@
         <div class="topbar-meta">
           <div id="clock" class="clock">00:00:00</div>
           <div id="bridgePill" class="tag-premium">Bridge: ...</div>
+          <div id="healthPill" class="tag-premium">Health: --</div>
           <button class="btn-premium" id="btnRefresh" type="button">Recarregar</button>
         </div>
       </header>
@@ -1155,8 +1184,8 @@
         <section class="glass-panel hero-panel">
           <div class="hero-copy">
             <div>
-              <h2>Saúde do Sistema</h2>
-              <p>Infraestrutura, bridge e agenda dos envios automáticos.</p>
+              <h2>Sala de operação</h2>
+              <p>Painel vivo da operação, com leitura pronta para ação.</p>
             </div>
             <div class="report-tags">
               <div id="opsStatusTag" class="tag-premium">Status: ...</div>
@@ -1164,32 +1193,14 @@
             </div>
           </div>
 
-          <div class="metrics-row">
-            <div class="metric-card">
-              <span class="metric-label">Assinantes Ativos</span>
-              <div class="metric-value" id="subscriberCount">--</div>
-            </div>
-            <div class="metric-card">
-              <span class="metric-label">Lotes Hoje</span>
-              <div class="metric-value" id="summaryCount">--</div>
-            </div>
-            <div class="metric-card" style="border-color: var(--accent-soft);">
-              <span class="metric-label">Próxima Janela</span>
-              <div class="metric-value" id="nextSendTime">--:--</div>
-              <span class="countdown-label" id="nextCountdown">Calculando...</span>
-            </div>
-            <div class="metric-card">
-              <span class="metric-label">Score de Operação</span>
-              <div class="metric-value" id="healthScore">--%</div>
-            </div>
-          </div>
+          <div id="metricsRow" class="metrics-row"></div>
         </section>
 
         <div class="ops-grid">
           <section class="glass-panel report-panel">
             <div class="panel-heading">
               <div>
-                <h3>Relatórios</h3>
+                <h3>Pulso do dia</h3>
                 <p id="opsNarrative" class="ops-narrative">Carregando panorama operacional...</p>
               </div>
               <div class="report-tags">
@@ -1198,26 +1209,31 @@
             </div>
 
             <div class="ops-report-grid">
-              <article class="ops-report-item">
-                <span>Pendências de Hoje</span>
+              <article class="ops-report-item" data-quick-action="reading:pending" tabindex="0" role="button">
+                <span>Pendências</span>
                 <strong id="pendingSummaries">--</strong>
               </article>
-              <article class="ops-report-item">
+              <article class="ops-report-item" data-quick-action="focus:recentRuns" tabindex="0" role="button">
+                <span>Falhas de entrega</span>
+                <strong id="failedDeliveries">--</strong>
+              </article>
+              <article class="ops-report-item" data-quick-action="focus:metricsRow" tabindex="0" role="button">
                 <span>Bridge</span>
                 <strong id="bridgeStatusText">--</strong>
               </article>
-              <article class="ops-report-item">
-                <span>Próximo Lote</span>
+              <article class="ops-report-item" data-quick-action="focus:miniTimeline" tabindex="0" role="button">
+                <span>Próxima janela</span>
                 <strong id="nextSendLabel">--</strong>
-              </article>
-              <article class="ops-report-item">
-                <span>Timeline</span>
-                <strong id="recentRunCount">--</strong>
               </article>
             </div>
 
             <div class="timeline-block">
-              <span class="section-kicker">Últimos Pipelines</span>
+              <span class="section-kicker">Mini timeline</span>
+              <div id="miniTimeline" class="mini-timeline"></div>
+            </div>
+
+            <div class="timeline-block runs-block">
+              <span class="section-kicker">Últimos pipelines</span>
               <div id="recentRuns" class="run-timeline"></div>
             </div>
           </section>
@@ -1225,30 +1241,35 @@
           <aside class="glass-panel actions-panel">
             <div class="panel-heading">
               <div>
-                <h3>Controle Manual</h3>
-                <p>Ações rápidas para reenvio e disparo imediato.</p>
+                <h3>Controle manual</h3>
+                <p>Atalhos de reenvio e disparo imediato, sem sair da dashboard.</p>
               </div>
             </div>
             <button class="btn-action-large" id="btn-retry" type="button">
-              <strong>Reenviar Falhas</strong>
-              <span>Processa pendências de hoje.</span>
+              <strong>Reenviar pendências de hoje</strong>
+              <span>Refaz a entrega dos resumos ainda não enviados.</span>
             </button>
-            <button class="btn-action-large" data-pipeline-period="morning" id="btn-morning" type="button">
-              <strong>Forçar Matutino</strong>
-              <span>Executa imediatamente a janela da manhã.</span>
+            <button class="btn-action-large" data-pipeline-period="morning" type="button">
+              <strong>Forçar manhã</strong>
+              <span>Executa a janela matinal agora.</span>
             </button>
-            <button class="btn-action-large" data-pipeline-period="midday" id="btn-midday" type="button">
-              <strong>Forçar Meio-dia</strong>
-              <span>Executa imediatamente a janela do meio-dia.</span>
+            <button class="btn-action-large" data-pipeline-period="midday" type="button">
+              <strong>Forçar meio-dia</strong>
+              <span>Executa a janela intermediária imediatamente.</span>
             </button>
-            <button class="btn-action-large" data-pipeline-period="afternoon" id="btn-afternoon" type="button">
-              <strong>Forçar Tarde</strong>
-              <span>Executa imediatamente a janela da tarde.</span>
+            <button class="btn-action-large" data-pipeline-period="afternoon" type="button">
+              <strong>Forçar tarde</strong>
+              <span>Executa a janela da tarde agora.</span>
             </button>
-            <button class="btn-action-large" data-pipeline-period="evening" id="btn-evening" type="button">
-              <strong>Forçar Noite</strong>
-              <span>Executa imediatamente a janela final do dia.</span>
+            <button class="btn-action-large" data-pipeline-period="evening" type="button">
+              <strong>Forçar noite</strong>
+              <span>Executa a janela final do dia agora.</span>
             </button>
+
+            <div class="feed-block">
+              <span class="section-kicker">Feeds em atenção</span>
+              <div id="feedAlerts" class="run-timeline"></div>
+            </div>
           </aside>
         </div>
       </main>
@@ -1261,28 +1282,7 @@
               <p>Use a lateral para navegar pelos grupos do dia.</p>
             </div>
 
-            <div class="category-nav" aria-label="Categorias de leitura">
-              <button class="cat-nav-btn is-active" data-group="Todas" type="button">
-                <span>Todas</span>
-                <span class="cat-count" id="count-all">0</span>
-              </button>
-              <button class="cat-nav-btn" data-group="Brasil" type="button">
-                <span>Brasil</span>
-                <span class="cat-count" id="count-brasil">0</span>
-              </button>
-              <button class="cat-nav-btn" data-group="Economia" type="button">
-                <span>Economia</span>
-                <span class="cat-count" id="count-economia">0</span>
-              </button>
-              <button class="cat-nav-btn" data-group="Mundo" type="button">
-                <span>Mundo</span>
-                <span class="cat-count" id="count-mundo">0</span>
-              </button>
-              <button class="cat-nav-btn" data-group="Tech" type="button">
-                <span>Tech</span>
-                <span class="cat-count" id="count-tech">0</span>
-              </button>
-            </div>
+            <div id="categoryNav" class="category-nav" aria-label="Categorias de leitura"></div>
           </aside>
 
           <div class="reading-main">
@@ -1296,20 +1296,18 @@
 
               <div class="toolbar-bottom">
                 <div class="toolbar-group">
-                  <div class="segmented-control" role="group" aria-label="Ordenação">
-                    <button class="sort-chip is-active" data-sort="newest" type="button">Mais recentes</button>
-                    <button class="sort-chip" data-sort="oldest" type="button">Mais antigos</button>
-                  </div>
-
-                  <div class="period-control" role="group" aria-label="Filtrar por período">
-                    <button class="period-chip" data-filter-period="morning" type="button">Manhã</button>
-                    <button class="period-chip" data-filter-period="midday" type="button">Meio-dia</button>
-                    <button class="period-chip" data-filter-period="afternoon" type="button">Tarde</button>
-                    <button class="period-chip" data-filter-period="evening" type="button">Noite</button>
-                  </div>
+                  <div id="sortControl" class="segmented-control" role="group" aria-label="Ordenação"></div>
+                  <div id="periodControl" class="period-control" role="group" aria-label="Filtrar por período"></div>
                 </div>
 
                 <button class="btn-premium" id="btn-clearFilters" type="button">Limpar filtros</button>
+              </div>
+
+              <div class="toolbar-bottom">
+                <div class="toolbar-group">
+                  <div id="statusControl" class="status-control" role="group" aria-label="Filtrar por status"></div>
+                  <div id="sourceControl" class="source-control" role="group" aria-label="Filtrar por fontes"></div>
+                </div>
               </div>
             </div>
 
@@ -1350,22 +1348,22 @@
         <div class="drawer-body">
           <h2 id="drawerTitle" class="drawer-title">Selecione um resumo</h2>
 
-          <section id="drawerBulletsSection" class="drawer-section">
+          <section class="drawer-section">
             <span class="drawer-section-label">Destaques</span>
             <ul id="drawerBullets" class="drawer-bullets"></ul>
           </section>
 
           <section id="drawerInsightSection" class="drawer-section">
-            <span class="drawer-section-label">Insight Estratégico</span>
+            <span class="drawer-section-label">Insight</span>
             <p id="drawerInsight" class="drawer-insight"></p>
           </section>
 
-          <section id="drawerSummarySection" class="drawer-section">
-            <span class="drawer-section-label">Resumo Completo</span>
-            <div id="drawerSummaryText" class="drawer-summary-text"></div>
+          <section class="drawer-section">
+            <span class="drawer-section-label">Leitura completa</span>
+            <div id="drawerSections"></div>
           </section>
 
-          <section id="drawerSourcesSection" class="drawer-section" hidden>
+          <section id="drawerSourcesSection" class="drawer-section">
             <span class="drawer-section-label">Fontes</span>
             <ul id="drawerSources" class="drawer-source-list"></ul>
           </section>

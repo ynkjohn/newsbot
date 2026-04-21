@@ -1,61 +1,74 @@
 (function () {
-  const CAT_LABELS = {
-    tech: "Tecnologia",
-    "economia-cripto": "Criptoativos",
-    "economia-brasil": "Economia Brasil",
-    "economia-mundao": "Economia Global",
-    "politica-brasil": "Política Brasil",
-    "politica-mundao": "Geopolítica",
-  };
-
-  const GROUP_MAPPING = {
-    Brasil: ["politica-brasil", "economia-brasil"],
-    Economia: ["economia-cripto", "economia-brasil", "economia-mundao"],
-    Mundo: ["politica-mundao", "economia-mundao"],
-    Tech: ["tech"],
-  };
-
-  const PERIOD_LABELS = {
-    morning: "Manhã",
-    midday: "Meio-dia",
-    afternoon: "Tarde",
-    evening: "Noite",
-  };
-
-  const RUN_STATUS_META = {
-    running: { label: "Rodando", tone: "warn" },
-    completed: { label: "Concluído", tone: "ok" },
-    failed: { label: "Falhou", tone: "danger" },
-  };
-
-  const DEFAULT_SCHEDULE_HOURS = [7, 12, 17, 21];
+  const STORAGE_KEY = "newsbot-dashboard-v9";
   const AUTO_REFRESH_MS = 60_000;
-  const STORAGE_KEY = "newsbot-dashboard-v6";
+  const CLOCK_REFRESH_MS = 1_000;
+  const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 
-  const reducedMotionQuery =
-    typeof window.matchMedia === "function"
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : { matches: false };
+  const SORT_OPTIONS = [
+    { value: "newest", label: "Mais novos" },
+    { value: "oldest", label: "Mais antigos" },
+  ];
+
+  const PERIOD_OPTIONS = [
+    { value: "morning", label: "Manhã" },
+    { value: "midday", label: "Meio-dia" },
+    { value: "afternoon", label: "Tarde" },
+    { value: "evening", label: "Noite" },
+  ];
+
+  const STATUS_OPTIONS = [
+    { value: "pending", label: "Pendentes" },
+    { value: "sent", label: "Enviados" },
+  ];
+
+  const SOURCE_OPTIONS = [
+    { value: 0, label: "Todas as fontes" },
+    { value: 1, label: "1+ fonte" },
+    { value: 3, label: "3+ fontes" },
+    { value: 5, label: "5+ fontes" },
+  ];
+
+  const CATEGORY_ORDER = [
+    { value: "all", label: "Todas" },
+    { value: "politica-brasil", label: "Política Nacional" },
+    { value: "economia-brasil", label: "Economia Nacional" },
+    { value: "politica-mundao", label: "Geopolítica" },
+    { value: "economia-mundao", label: "Economia Global" },
+    { value: "economia-cripto", label: "Criptoativos" },
+    { value: "tech", label: "Tecnologia" },
+  ];
+
+  const STATUS_META = {
+    connected: { label: "Bridge online", tone: "ok" },
+    connected_false: { label: "Bridge instável", tone: "warn" },
+    unreachable: { label: "Bridge offline", tone: "danger" },
+    completed: { label: "Concluído", tone: "ok" },
+    running: { label: "Em execução", tone: "warn" },
+    upcoming: { label: "Próximo", tone: "warn" },
+    failed: { label: "Falhou", tone: "danger" },
+    pending: { label: "Pendente", tone: "warn" },
+    sent: { label: "Enviado", tone: "ok" },
+  };
 
   const state = {
-    currentView: "ops",
-    currentGroup: "Todas",
+    loading: true,
+    view: "ops",
+    payload: null,
+    currentCategory: "all",
     filters: {
       search: "",
       sort: "newest",
       periods: new Set(),
+      statuses: new Set(),
+      sourceMin: 0,
+      insightOnly: false,
     },
-    dashboard: null,
-    whatsapp: { connected: false, status: "carregando" },
-    loading: false,
-    toastTimer: null,
-    reducedMotion: !!reducedMotionQuery.matches,
     drawer: {
-      isOpen: false,
-      isAnimating: false,
-      summaryId: null,
-      opener: null,
+      open: false,
+      cardId: null,
     },
+    toastTimer: null,
+    clockTimer: null,
   };
 
   function byId(id) {
@@ -63,8 +76,7 @@
   }
 
   function escapeHtml(value) {
-    if (value === undefined || value === null) return "";
-    return String(value)
+    return String(value ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
@@ -76,539 +88,141 @@
     return String(value || "")
       .normalize("NFKD")
       .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-  }
-
-  function setText(id, value) {
-    const node = byId(id);
-    if (node) node.textContent = value ?? "--";
-  }
-
-  function setTagState(id, text, tone) {
-    const node = byId(id);
-    if (!node) return;
-
-    node.textContent = text;
-    node.classList.remove("is-ok", "is-warn", "is-danger");
-    if (tone === "ok") node.classList.add("is-ok");
-    if (tone === "warn") node.classList.add("is-warn");
-    if (tone === "danger") node.classList.add("is-danger");
-  }
-
-  function formatCategory(category) {
-    return CAT_LABELS[category] || category || "Categoria";
-  }
-
-  function formatPeriod(period) {
-    return PERIOD_LABELS[period] || period || "Janela";
-  }
-
-  function formatTime(value) {
-    if (!value) return "--";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "--";
-    return date.toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  function formatDateTime(value) {
-    if (!value) return "--";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "--";
-    return date.toLocaleString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-      day: "2-digit",
-      month: "2-digit",
-    });
-  }
-
-  function formatSourceLabel(url) {
-    try {
-      const parsed = new URL(url);
-      return parsed.hostname.replace(/^www\./, "");
-    } catch (error) {
-      return url;
-    }
+      .toLowerCase()
+      .trim();
   }
 
   function pluralize(value, singular, plural) {
     return `${value} ${value === 1 ? singular : plural}`;
   }
 
-  function showToast(message, isError) {
+  function timezone() {
+    return state.payload?.timezone || DEFAULT_TIMEZONE;
+  }
+
+  function parseDate(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function formatTime(value) {
+    const date = parseDate(value);
+    if (!date) return "--";
+    return new Intl.DateTimeFormat("pt-BR", {
+      timeZone: timezone(),
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function formatDateTime(value) {
+    const date = parseDate(value);
+    if (!date) return "--";
+    return new Intl.DateTimeFormat("pt-BR", {
+      timeZone: timezone(),
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function formatCountdown(target) {
+    const date = parseDate(target);
+    if (!date) return "";
+
+    const diffMs = date.getTime() - Date.now();
+    if (diffMs <= 0) {
+      return "Disparo em andamento";
+    }
+
+    const totalSeconds = Math.floor(diffMs / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return `Faltam ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
+  }
+
+  function bridgeMeta(bridge) {
+    if (bridge?.connected) return STATUS_META.connected;
+    if (normalizeText(bridge?.status) === "connected") return STATUS_META.connected_false;
+    return STATUS_META.unreachable;
+  }
+
+  function statusMeta(status) {
+    return STATUS_META[status] || { label: status || "Indefinido", tone: "warn" };
+  }
+
+  function healthTone(score) {
+    if (score >= 80) return "ok";
+    if (score >= 60) return "warn";
+    return "danger";
+  }
+
+  function operationData() {
+    return state.payload?.operation || null;
+  }
+
+  function readingData() {
+    return state.payload?.reading || { summaryCount: 0, categoryCounts: {}, cards: [] };
+  }
+
+  function allCards() {
+    return Array.isArray(readingData().cards) ? readingData().cards : [];
+  }
+
+  function setTag(node, text, tone) {
+    if (!node) return;
+    node.className = tone ? `tag-premium is-${tone}` : "tag-premium";
+    node.textContent = text;
+  }
+
+  function updateClock() {
+    const clock = byId("clock");
+    if (!clock) return;
+    clock.textContent = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: timezone(),
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(new Date());
+    updateCountdowns();
+  }
+
+  function startClock() {
+    updateClock();
+    if (state.clockTimer) return;
+    state.clockTimer = window.setInterval(updateClock, CLOCK_REFRESH_MS);
+  }
+
+  function updateCountdowns() {
+    document.querySelectorAll("[data-countdown-target]").forEach((node) => {
+      const text = formatCountdown(node.dataset.countdownTarget);
+      node.textContent = text;
+      node.style.display = text ? "block" : "none";
+    });
+  }
+
+  function showToast(message, tone) {
     const toast = byId("toast");
     if (!toast) return;
 
     toast.textContent = message;
-    toast.classList.toggle("error", !!isError);
+    toast.classList.remove("error");
+    if (tone === "danger") {
+      toast.classList.add("error");
+    }
     toast.classList.add("show");
 
-    if (state.toastTimer) window.clearTimeout(state.toastTimer);
+    if (state.toastTimer) {
+      window.clearTimeout(state.toastTimer);
+    }
+
     state.toastTimer = window.setTimeout(() => {
-      toast.classList.remove("show");
-      toast.classList.remove("error");
-    }, 3200);
-  }
-
-  function getScheduleHours() {
-    const hours = state.dashboard?.pipelineHours;
-    if (!Array.isArray(hours)) return DEFAULT_SCHEDULE_HOURS;
-
-    const valid = hours
-      .map((hour) => Number(hour))
-      .filter((hour) => Number.isFinite(hour) && hour >= 0 && hour <= 23)
-      .sort((a, b) => a - b);
-
-    return valid.length ? valid : DEFAULT_SCHEDULE_HOURS;
-  }
-
-  function computeNextWindow() {
-    const hours = getScheduleHours();
-    const now = new Date();
-    const nextDate = new Date(now);
-    let nextHour = hours.find(
-      (hour) => hour > now.getHours() || (hour === now.getHours() && now.getMinutes() === 0 && now.getSeconds() === 0),
-    );
-
-    if (nextHour === undefined) {
-      nextHour = hours[0];
-      nextDate.setDate(now.getDate() + 1);
-    }
-
-    nextDate.setHours(nextHour, 0, 0, 0);
-
-    if (nextDate <= now) {
-      const fallbackHour = hours[(hours.indexOf(nextHour) + 1) % hours.length];
-      if (fallbackHour <= nextHour) nextDate.setDate(nextDate.getDate() + 1);
-      nextDate.setHours(fallbackHour, 0, 0, 0);
-      nextHour = fallbackHour;
-    }
-
-    return {
-      hour: nextHour,
-      date: nextDate,
-      diffMs: nextDate.getTime() - now.getTime(),
-    };
-  }
-
-  function updateCountdown() {
-    const next = computeNextWindow();
-    if (!next || next.diffMs < 0) {
-      setText("nextSendTime", "--:--");
-      setText("nextCountdown", "Calculando...");
-      setText("nextSendLabel", "--");
-      return;
-    }
-
-    const hours = Math.floor(next.diffMs / 3600000);
-    const mins = Math.floor((next.diffMs % 3600000) / 60000);
-    const secs = Math.floor((next.diffMs % 60000) / 1000);
-    const timeLabel = `${String(next.hour).padStart(2, "0")}:00`;
-    const now = new Date();
-    const isTomorrow =
-      next.date.getDate() !== now.getDate() ||
-      next.date.getMonth() !== now.getMonth() ||
-      next.date.getFullYear() !== now.getFullYear();
-
-    setText("nextSendTime", timeLabel);
-    setText("nextCountdown", `em ${hours}h ${mins}m ${secs}s`);
-    setText("nextSendLabel", `${isTomorrow ? "Amanhã" : "Hoje"}, ${timeLabel}`);
-  }
-
-  function getAllSummaries() {
-    return Array.isArray(state.dashboard?.summaries) ? state.dashboard.summaries : [];
-  }
-
-  function getSummaryPreview(summary) {
-    if (Array.isArray(summary?.bullets) && summary.bullets.length > 0) {
-      return summary.bullets[0];
-    }
-
-    if (summary?.insight) return summary.insight;
-
-    const body = extractSummaryBody(summary);
-    if (!body) return "Resumo completo indisponível.";
-    const firstParagraph = body.split(/\n+/).find(Boolean) || "";
-    return firstParagraph;
-  }
-
-  function extractSummaryBody(summary) {
-    const rawText = String(summary?.summaryText || "").trim();
-    if (!rawText) return "";
-
-    const lines = rawText
-      .split(/\r?\n/)
-      .map((line) => line.trimEnd())
-      .filter((line, index, arr) => line || (index > 0 && arr[index - 1]));
-
-    while (lines.length && !lines[0].trim()) lines.shift();
-
-    const header = String(summary?.header || "").trim();
-    if (lines.length && normalizeText(lines[0]) === normalizeText(header)) {
-      lines.shift();
-    }
-
-    return lines.join("\n").trim();
-  }
-
-  function buildSummaryParagraphs(summary) {
-    const body = extractSummaryBody(summary);
-    if (!body) {
-      return '<p>O corpo completo deste resumo não foi salvo.</p>';
-    }
-
-    return body
-      .split(/\n{2,}/)
-      .map((paragraph) => paragraph.trim())
-      .filter(Boolean)
-      .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`)
-      .join("");
-  }
-
-  function getFilteredItems() {
-    let items = [...getAllSummaries()];
-
-    if (state.currentGroup !== "Todas") {
-      const allowedCategories = GROUP_MAPPING[state.currentGroup] || [];
-      items = items.filter((item) => allowedCategories.includes(item.category));
-    }
-
-    if (state.filters.periods.size > 0) {
-      items = items.filter((item) => state.filters.periods.has(item.period));
-    }
-
-    const search = state.filters.search.trim().toLowerCase();
-    if (search) {
-      items = items.filter((item) => {
-        const haystack = [
-          item.header,
-          item.insight,
-          item.summaryText,
-          ...(Array.isArray(item.bullets) ? item.bullets : []),
-        ]
-          .join(" ")
-          .toLowerCase();
-        return haystack.includes(search);
-      });
-    }
-
-    items.sort((left, right) => {
-      const dateLeft = new Date(left.created_at || left.date || 0);
-      const dateRight = new Date(right.created_at || right.date || 0);
-      return state.filters.sort === "oldest" ? dateLeft - dateRight : dateRight - dateLeft;
-    });
-
-    return items;
-  }
-
-  function updateCounts() {
-    const summaries = getAllSummaries();
-    setText("count-all", summaries.length);
-
-    Object.keys(GROUP_MAPPING).forEach((group) => {
-      const count = summaries.filter((item) => GROUP_MAPPING[group].includes(item.category)).length;
-      const countNode = byId(`count-${group.toLowerCase()}`);
-      if (countNode) countNode.textContent = count;
-    });
-  }
-
-  function buildReadingContextLabel() {
-    const parts = [state.currentGroup];
-    if (state.filters.periods.size > 0) {
-      parts.push(Array.from(state.filters.periods).map(formatPeriod).join(" / "));
-    }
-    return parts.join(" · ");
-  }
-
-  function updateFilterControls() {
-    document.querySelectorAll(".cat-nav-btn").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.group === state.currentGroup);
-    });
-
-    document.querySelectorAll(".sort-chip").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.sort === state.filters.sort);
-    });
-
-    document.querySelectorAll(".period-chip").forEach((button) => {
-      button.classList.toggle("is-active", state.filters.periods.has(button.dataset.filterPeriod));
-    });
-
-    const contextTag = byId("readingContextTag");
-    if (contextTag) contextTag.textContent = buildReadingContextLabel();
-  }
-
-  function syncSelectedSummaryCard() {
-    const cards = document.querySelectorAll(".summary-card");
-    let activeCardFound = false;
-
-    cards.forEach((card) => {
-      const isSelected = state.drawer.isOpen && Number(card.dataset.summaryId) === state.drawer.summaryId;
-      card.classList.toggle("is-selected", isSelected);
-      card.setAttribute("aria-expanded", isSelected ? "true" : "false");
-      if (isSelected) {
-        activeCardFound = true;
-        state.drawer.opener = card;
-      }
-    });
-
-    if (state.drawer.isOpen && !activeCardFound) {
-      closeSummaryDrawer(false);
-    }
-  }
-
-  function renderSummaries() {
-    const container = byId("summaries");
-    if (!container) return;
-
-    const items = getFilteredItems();
-    const resultCountTag = byId("readingResultCount");
-    if (resultCountTag) {
-      resultCountTag.textContent = pluralize(items.length, "resumo", "resumos");
-    }
-
-    if (!items.length) {
-      container.innerHTML =
-        '<div class="empty-state">Nenhum resumo encontrado para os filtros atuais.</div>';
-      syncSelectedSummaryCard();
-      return;
-    }
-
-    container.innerHTML = items
-      .map((summary) => {
-        const metaLeft = `${formatCategory(summary.category)} · ${formatPeriod(summary.period)}`;
-        const sourceCountText = summary.sourceCount
-          ? pluralize(summary.sourceCount, "fonte", "fontes")
-          : "Sem fontes mapeadas";
-
-        return `
-          <button
-            type="button"
-            class="summary-card"
-            data-summary-id="${summary.id}"
-            aria-expanded="false"
-          >
-            <div class="summary-card-meta">
-              <span>${escapeHtml(metaLeft)}</span>
-              <span>${escapeHtml(formatTime(summary.created_at || summary.date))}</span>
-            </div>
-            <strong class="summary-card-title">${escapeHtml(summary.header || "Resumo")}</strong>
-            <span class="summary-card-preview">${escapeHtml(getSummaryPreview(summary))}</span>
-            <span class="summary-card-foot">${escapeHtml(sourceCountText)}</span>
-          </button>
-        `;
-      })
-      .join("");
-
-    syncSelectedSummaryCard();
-  }
-
-  function computeScore() {
-    if (!state.dashboard) return "0%";
-
-    let score = 100;
-    if (!state.whatsapp?.connected) score -= 35;
-    if (state.dashboard.subscribers === 0) score -= 20;
-    if (state.dashboard.todaySummaries === 0) score -= 10;
-    if (state.dashboard.pendingSummaries > 0) score -= Math.min(25, state.dashboard.pendingSummaries * 5);
-
-    return `${Math.max(0, score)}%`;
-  }
-
-  function buildNarrative() {
-    if (!state.dashboard) return "Aguardando dados da operação.";
-
-    const parts = [];
-    if (state.whatsapp?.connected) {
-      parts.push("bridge online");
-    } else {
-      parts.push(`bridge com status ${state.whatsapp?.status || "indisponível"}`);
-    }
-
-    parts.push(`${state.dashboard.subscribers} assinante(s) ativo(s)`);
-    parts.push(`${state.dashboard.todaySummaries} lote(s) gerado(s) hoje`);
-
-    if (state.dashboard.pendingSummaries > 0) {
-      parts.push(`${state.dashboard.pendingSummaries} pendência(s) aguardando envio`);
-    } else {
-      parts.push("sem pendências de envio");
-    }
-
-    return `Visão rápida: ${parts.join(", ")}.`;
-  }
-
-  function getRunStatus(run) {
-    return RUN_STATUS_META[run?.status] || { label: run?.status || "Desconhecido", tone: "warn" };
-  }
-
-  function formatRunWindow(run) {
-    const start = formatTime(run?.startedAt);
-    const finish = formatTime(run?.finishedAt);
-    if (start === "--") return "Horário indisponível";
-    if (!run?.finishedAt) return `Iniciado às ${start}`;
-    return `${start} → ${finish}`;
-  }
-
-  function renderRecentRuns() {
-    const container = byId("recentRuns");
-    if (!container) return;
-
-    const runs = Array.isArray(state.dashboard?.recentRuns) ? state.dashboard.recentRuns : [];
-    setText("recentRunCount", pluralize(runs.length, "pipeline recente", "pipelines recentes"));
-
-    if (!runs.length) {
-      container.innerHTML = '<div class="empty-state">Nenhum pipeline recente registrado.</div>';
-      return;
-    }
-
-    container.innerHTML = runs
-      .map((run) => {
-        const runStatus = getRunStatus(run);
-        return `
-          <article class="run-item">
-            <div>
-              <div class="run-title-row">
-                <strong>${escapeHtml(formatPeriod(run.period))}</strong>
-                <span class="tag-premium is-${runStatus.tone}">${escapeHtml(runStatus.label)}</span>
-              </div>
-              <span class="run-time">${escapeHtml(formatRunWindow(run))}</span>
-            </div>
-            <div class="run-metrics">
-              ${escapeHtml(`${run.articlesCollected || 0} art · ${run.summariesGenerated || 0} res · ${run.messagesSent || 0} env`)}
-            </div>
-          </article>
-        `;
-      })
-      .join("");
-  }
-
-  function updateOperationView() {
-    if (!state.dashboard) return;
-
-    const scoreValue = computeScore();
-    const scoreNumber = Number.parseInt(scoreValue, 10) || 0;
-    const hasPending = state.dashboard.pendingSummaries > 0;
-    const bridgeOnline = !!state.whatsapp?.connected;
-
-    setText("subscriberCount", state.dashboard.subscribers);
-    setText("summaryCount", state.dashboard.todaySummaries);
-    setText("pendingSummaries", state.dashboard.pendingSummaries);
-    setText("healthScore", scoreValue);
-    setText("bridgeStatusText", bridgeOnline ? "Online" : state.whatsapp?.status || "Indisponível");
-    setText("lastUpdatedAt", `Atualizado: ${formatDateTime(new Date().toISOString())}`);
-    setText("opsNarrative", buildNarrative());
-
-    const scheduleDisplay =
-      state.dashboard.nextSend ||
-      getScheduleHours().map((hour) => `${String(hour).padStart(2, "0")}:00`).join(" / ");
-    setTagState("scheduleTag", `Agenda: ${scheduleDisplay}`, "warn");
-
-    if (bridgeOnline && !hasPending && scoreNumber >= 80) {
-      setTagState("opsStatusTag", "Status: operacional", "ok");
-    } else if (scoreNumber >= 55) {
-      setTagState("opsStatusTag", "Status: atenção", "warn");
-    } else {
-      setTagState("opsStatusTag", "Status: degradado", "danger");
-    }
-
-    if (bridgeOnline) {
-      setTagState("bridgePill", "Bridge: online", "ok");
-    } else {
-      setTagState("bridgePill", `Bridge: ${state.whatsapp?.status || "offline"}`, "danger");
-    }
-
-    renderRecentRuns();
-    updateCountdown();
-  }
-
-  async function fetchJson(url, options) {
-    const response = await fetch(url, options);
-    let payload = null;
-
-    try {
-      payload = await response.json();
-    } catch (error) {
-      payload = null;
-    }
-
-    if (!response.ok) {
-      const message = payload?.error || payload?.message || `Falha ao chamar ${url}`;
-      throw new Error(message);
-    }
-
-    return payload;
-  }
-
-  async function loadData() {
-    if (state.loading) return;
-
-    state.loading = true;
-    const refreshButton = byId("btnRefresh");
-    const originalLabel = refreshButton ? refreshButton.innerHTML : "";
-    if (refreshButton) {
-      refreshButton.disabled = true;
-      refreshButton.innerHTML = '<span class="spin">◌</span> Atualizando';
-    }
-
-    try {
-      const [dashboardPayload, whatsappPayload] = await Promise.all([
-        fetchJson("/api/dashboard"),
-        fetch("/api/whatsapp-status")
-          .then(async (response) => {
-            if (!response.ok) {
-              return { connected: false, status: "indisponível" };
-            }
-            return response.json();
-          })
-          .catch(() => ({ connected: false, status: "indisponível" })),
-      ]);
-
-      state.dashboard = dashboardPayload;
-      state.whatsapp = whatsappPayload || { connected: false, status: "indisponível" };
-
-      updateOperationView();
-      updateCounts();
-      updateFilterControls();
-      renderSummaries();
-
-      if (state.drawer.isOpen) {
-        const summary = getAllSummaries().find((item) => item.id === state.drawer.summaryId);
-        if (summary) {
-          renderDrawer(summary);
-        } else {
-          closeSummaryDrawer(false);
-        }
-      }
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Erro ao carregar dados da dashboard", true);
-    } finally {
-      state.loading = false;
-      if (refreshButton) {
-        refreshButton.disabled = false;
-        refreshButton.innerHTML = originalLabel || "Recarregar";
-      }
-    }
-  }
-
-  function savePreferences() {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          view: state.currentView,
-          group: state.currentGroup,
-          sort: state.filters.sort,
-          periods: Array.from(state.filters.periods),
-        }),
-      );
-    } catch (error) {
-      console.debug("Falha ao salvar preferências", error);
-    }
+      toast.classList.remove("show", "error");
+    }, 2600);
   }
 
   function loadPreferences() {
@@ -617,244 +231,193 @@
       if (!raw) return;
 
       const saved = JSON.parse(raw);
-      if (saved?.view) state.currentView = saved.view;
-      if (saved?.group) state.currentGroup = saved.group;
-      if (saved?.sort) state.filters.sort = saved.sort;
-      if (Array.isArray(saved?.periods)) {
-        state.filters.periods = new Set(saved.periods);
-      }
+      state.view = saved.view === "reading" ? "reading" : "ops";
+      state.currentCategory = saved.currentCategory || "all";
+      state.filters.search = saved.search || "";
+      state.filters.sort = saved.sort === "oldest" ? "oldest" : "newest";
+      state.filters.periods = new Set(saved.periods || []);
+      state.filters.statuses = new Set(saved.statuses || []);
+      state.filters.sourceMin = Number(saved.sourceMin || 0);
+      state.filters.insightOnly = Boolean(saved.insightOnly);
     } catch (error) {
-      console.debug("Falha ao ler preferências", error);
+      console.debug("Falha ao carregar preferências", error);
     }
   }
 
-  function applyPreferences() {
-    switchView(state.currentView, false);
-    setGroupFilter(state.currentGroup, false);
-    setSort(state.filters.sort, false);
-    updateFilterControls();
-  }
-
-  async function runButtonAction(buttonId, busyLabel, action) {
-    const button = byId(buttonId);
-    const originalHtml = button ? button.innerHTML : "";
-
-    if (button) {
-      button.disabled = true;
-      button.innerHTML = `<strong>${busyLabel}</strong><span>Aguarde a resposta da API.</span>`;
-    }
-
+  function savePreferences() {
     try {
-      await action();
-    } finally {
-      if (button) {
-        button.disabled = false;
-        button.innerHTML = originalHtml;
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          view: state.view,
+          currentCategory: state.currentCategory,
+          search: state.filters.search,
+          sort: state.filters.sort,
+          periods: Array.from(state.filters.periods),
+          statuses: Array.from(state.filters.statuses),
+          sourceMin: state.filters.sourceMin,
+          insightOnly: state.filters.insightOnly,
+        }),
+      );
+    } catch (error) {
+      console.debug("Falha ao salvar preferências", error);
+    }
+  }
+
+  function categoryOptions() {
+    const cards = allCards();
+    const counts = readingData().categoryCounts || {};
+    const firstCardByCategory = new Map();
+
+    cards.forEach((card) => {
+      if (!firstCardByCategory.has(card.category)) {
+        firstCardByCategory.set(card.category, card);
       }
-    }
-  }
-
-  function switchView(view, persist = true) {
-    state.currentView = view;
-
-    document.querySelectorAll(".view-content").forEach((node) => {
-      node.classList.toggle("active", node.id === `view-${view}`);
     });
 
-    document.querySelectorAll(".nav-btn").forEach((node) => {
-      node.classList.toggle("is-active", node.dataset.view === view);
+    const canonicalValues = new Set(CATEGORY_ORDER.map((option) => option.value));
+    const options = CATEGORY_ORDER.map((option) => {
+      if (option.value === "all") {
+        return {
+          value: option.value,
+          label: option.label,
+          count: readingData().summaryCount || cards.length,
+        };
+      }
+
+      const card = firstCardByCategory.get(option.value);
+      return {
+        value: option.value,
+        label: card?.categoryLabel || option.label,
+        count: counts[option.value] || 0,
+      };
     });
 
-    if (view !== "reading" && state.drawer.isOpen) {
-      closeSummaryDrawer(false);
-    }
+    const extras = cards
+      .filter((card) => !canonicalValues.has(card.category))
+      .filter((card, index, list) => list.findIndex((candidate) => candidate.category === card.category) === index)
+      .sort((left, right) => (left.categoryLabel || left.category).localeCompare(right.categoryLabel || right.category, "pt-BR"))
+      .map((card) => ({
+        value: card.category,
+        label: card.categoryLabel || card.category,
+        count: counts[card.category] || 0,
+      }));
 
-    if (view === "reading") {
-      updateFilterControls();
-      renderSummaries();
-    }
-
-    if (persist) savePreferences();
+    return [...options, ...extras];
   }
 
-  function setGroupFilter(group, persist = true) {
-    state.currentGroup = group;
-    updateFilterControls();
-    renderSummaries();
-    if (persist) savePreferences();
-  }
-
-  function setSort(sort, persist = true) {
-    state.filters.sort = sort;
-    updateFilterControls();
-    renderSummaries();
-    if (persist) savePreferences();
-  }
-
-  function togglePeriodFilter(period) {
-    if (state.filters.periods.has(period)) {
-      state.filters.periods.delete(period);
-    } else {
-      state.filters.periods.add(period);
+  function ensureValidState() {
+    const validCategories = new Set(categoryOptions().map((option) => option.value));
+    if (!validCategories.has(state.currentCategory)) {
+      state.currentCategory = "all";
     }
 
-    updateFilterControls();
-    renderSummaries();
-    savePreferences();
+    if (state.drawer.open && !allCards().some((card) => card.id === state.drawer.cardId)) {
+      state.drawer.open = false;
+      state.drawer.cardId = null;
+    }
+  }
+
+  function buildSearchHaystack(card) {
+    const sectionText = (card.bodySections || [])
+      .map((section) => `${section.title || ""} ${section.content || ""}`)
+      .join(" ");
+
+    return normalizeText(
+      [
+        card.header,
+        card.categoryLabel,
+        card.periodLabel,
+        ...(card.bullets || []),
+        card.insight || "",
+        sectionText,
+        card.summaryText || "",
+      ].join(" "),
+    );
+  }
+
+  function filteredCards() {
+    const query = normalizeText(state.filters.search);
+    let cards = [...allCards()];
+
+    if (state.currentCategory !== "all") {
+      cards = cards.filter((card) => card.category === state.currentCategory);
+    }
+
+    if (state.filters.periods.size > 0) {
+      cards = cards.filter((card) => state.filters.periods.has(card.period));
+    }
+
+    if (state.filters.statuses.size > 0) {
+      cards = cards.filter((card) => {
+        const status = card.isPending ? "pending" : "sent";
+        return state.filters.statuses.has(status);
+      });
+    }
+
+    if (state.filters.sourceMin > 0) {
+      cards = cards.filter((card) => Number(card.sourceCount || 0) >= state.filters.sourceMin);
+    }
+
+    if (state.filters.insightOnly) {
+      cards = cards.filter((card) => Boolean(card.hasInsight));
+    }
+
+    if (query) {
+      cards = cards.filter((card) => buildSearchHaystack(card).includes(query));
+    }
+
+    cards.sort((left, right) => {
+      const leftTime = parseDate(left.createdAt || left.date)?.getTime() || 0;
+      const rightTime = parseDate(right.createdAt || right.date)?.getTime() || 0;
+      return state.filters.sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
+    });
+
+    return cards;
+  }
+
+  function selectedCard(cards) {
+    if (!state.drawer.open) return null;
+    return cards.find((card) => card.id === state.drawer.cardId) || null;
+  }
+
+  function hasActiveFilters() {
+    return (
+      state.currentCategory !== "all" ||
+      Boolean(state.filters.search) ||
+      state.filters.periods.size > 0 ||
+      state.filters.statuses.size > 0 ||
+      state.filters.sourceMin > 0 ||
+      state.filters.insightOnly ||
+      state.filters.sort !== "newest"
+    );
   }
 
   function clearFilters() {
+    state.currentCategory = "all";
     state.filters.search = "";
     state.filters.sort = "newest";
     state.filters.periods.clear();
-    state.currentGroup = "Todas";
-
-    const searchInput = byId("searchInput");
-    if (searchInput) searchInput.value = "";
-
-    updateFilterControls();
-    renderSummaries();
+    state.filters.statuses.clear();
+    state.filters.sourceMin = 0;
+    state.filters.insightOnly = false;
     savePreferences();
+    render();
   }
 
-  function renderDrawer(summary) {
-    if (!summary) return;
-
-    const drawerTag = byId("drawerTag");
-    const metaParts = [
-      formatCategory(summary.category),
-      formatPeriod(summary.period),
-      formatTime(summary.created_at || summary.date),
-    ];
-
-    if (summary.sourceCount) {
-      metaParts.push(pluralize(summary.sourceCount, "fonte", "fontes"));
+  function setView(view) {
+    state.view = view === "reading" ? "reading" : "ops";
+    if (state.view !== "reading") {
+      hideDrawer();
     }
-
-    if (drawerTag) {
-      setTagState("drawerTag", formatCategory(summary.category), "warn");
-    }
-
-    setText("drawerTitle", summary.header || "Resumo");
-    setText("drawerMeta", metaParts.join(" · "));
-
-    const bulletsSection = byId("drawerBulletsSection");
-    const bulletList = byId("drawerBullets");
-    const bullets = Array.isArray(summary.bullets) && summary.bullets.length
-      ? summary.bullets
-      : ["Nenhum destaque estruturado foi salvo para este resumo."];
-    if (bulletList) {
-      bulletList.innerHTML = bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("");
-    }
-    if (bulletsSection) bulletsSection.hidden = false;
-
-    const insightSection = byId("drawerInsightSection");
-    const insightNode = byId("drawerInsight");
-    if (summary.insight) {
-      if (insightNode) insightNode.textContent = summary.insight;
-      if (insightSection) insightSection.hidden = false;
-    } else if (insightSection) {
-      insightSection.hidden = true;
-    }
-
-    const summarySection = byId("drawerSummarySection");
-    const summaryTextNode = byId("drawerSummaryText");
-    if (summaryTextNode) {
-      summaryTextNode.innerHTML = buildSummaryParagraphs(summary);
-    }
-    if (summarySection) summarySection.hidden = false;
-
-    const sourcesSection = byId("drawerSourcesSection");
-    const sourcesList = byId("drawerSources");
-    const sourceUrls = Array.isArray(summary.sourceUrls) ? summary.sourceUrls : [];
-    if (sourceUrls.length > 0) {
-      if (sourcesList) {
-        sourcesList.innerHTML = sourceUrls
-          .map(
-            (url) =>
-              `<li><a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(formatSourceLabel(url))}</a></li>`,
-          )
-          .join("");
-      }
-      if (sourcesSection) sourcesSection.hidden = false;
-    } else if (sourcesSection) {
-      sourcesSection.hidden = true;
-    }
+    savePreferences();
+    render();
   }
 
-  function getMotionDuration(durationMs) {
-    return state.reducedMotion ? 0 : durationMs;
-  }
+  function hideDrawer() {
+    state.drawer.open = false;
+    state.drawer.cardId = null;
 
-  function clearPressedCards() {
-    document.querySelectorAll(".summary-card.is-pressed").forEach((card) => {
-      card.classList.remove("is-pressed");
-    });
-  }
-
-  function animateSummaryCard(card, pointerInfo) {
-    if (!card || state.reducedMotion) return Promise.resolve();
-
-    const rect = card.getBoundingClientRect();
-    const pointerX = pointerInfo?.clientX ?? rect.left + rect.width / 2;
-    const pointerY = pointerInfo?.clientY ?? rect.top + rect.height / 2;
-
-    card.style.setProperty("--tap-x", `${pointerX - rect.left}px`);
-    card.style.setProperty("--tap-y", `${pointerY - rect.top}px`);
-    card.classList.remove("is-pressed");
-    card.classList.remove("is-opening");
-
-    return new Promise((resolve) => {
-      window.requestAnimationFrame(() => {
-        card.classList.add("is-opening");
-        window.setTimeout(() => {
-          card.classList.remove("is-opening");
-          resolve();
-        }, getMotionDuration(260));
-      });
-    });
-  }
-
-  async function openSummaryById(summaryId, opener, pointerInfo) {
-    if (state.drawer.isAnimating) return;
-
-    const summary = getAllSummaries().find((item) => item.id === summaryId);
-    if (!summary) return;
-
-    if (state.drawer.isOpen && state.drawer.summaryId === summaryId) {
-      byId("drawerClose")?.focus();
-      return;
-    }
-
-    state.drawer.isAnimating = true;
-    await animateSummaryCard(opener, pointerInfo);
-
-    state.drawer.isOpen = true;
-    state.drawer.summaryId = summaryId;
-    state.drawer.opener = opener || null;
-
-    renderDrawer(summary);
-
-    const drawer = byId("summaryDrawer");
-    const backdrop = byId("drawerBackdrop");
-    if (drawer) {
-      drawer.classList.add("is-open");
-      drawer.setAttribute("aria-hidden", "false");
-    }
-    if (backdrop) {
-      backdrop.classList.add("is-open");
-      backdrop.setAttribute("aria-hidden", "false");
-    }
-
-    syncSelectedSummaryCard();
-
-    window.setTimeout(() => {
-      byId("drawerClose")?.focus();
-      state.drawer.isAnimating = false;
-    }, getMotionDuration(80));
-  }
-
-  function closeSummaryDrawer(restoreFocus = true) {
     const drawer = byId("summaryDrawer");
     const backdrop = byId("drawerBackdrop");
     if (drawer) {
@@ -863,158 +426,795 @@
     }
     if (backdrop) {
       backdrop.classList.remove("is-open");
-      backdrop.setAttribute("aria-hidden", "true");
-    }
-
-    const opener = state.drawer.opener;
-    state.drawer.isOpen = false;
-    state.drawer.summaryId = null;
-    state.drawer.opener = null;
-    state.drawer.isAnimating = false;
-    syncSelectedSummaryCard();
-
-    if (restoreFocus && opener && typeof opener.focus === "function" && opener.isConnected) {
-      window.setTimeout(() => opener.focus(), 0);
     }
   }
 
-  function handleSummaryPointerDown(event) {
-    const card = event.target.closest(".summary-card");
-    if (!card) return;
+  function openDrawer(cardId) {
+    state.drawer.open = true;
+    state.drawer.cardId = cardId;
+    render();
+  }
 
-    clearPressedCards();
-    card.style.setProperty("--tap-x", `${event.clientX - card.getBoundingClientRect().left}px`);
-    card.style.setProperty("--tap-y", `${event.clientY - card.getBoundingClientRect().top}px`);
-    if (!state.reducedMotion) {
-      card.classList.add("is-pressed");
+  function activeContextLabel() {
+    const parts = [];
+    const selectedCategory = categoryOptions().find((option) => option.value === state.currentCategory);
+
+    if (selectedCategory && selectedCategory.value !== "all") {
+      parts.push(selectedCategory.label);
+    } else {
+      parts.push("Todas");
+    }
+
+    if (state.filters.periods.size > 0) {
+      parts.push(
+        Array.from(state.filters.periods)
+          .map((period) => PERIOD_OPTIONS.find((option) => option.value === period)?.label || period)
+          .join(", "),
+      );
+    }
+
+    if (state.filters.statuses.size > 0) {
+      parts.push(
+        Array.from(state.filters.statuses)
+          .map((status) => STATUS_OPTIONS.find((option) => option.value === status)?.label || status)
+          .join(", "),
+      );
+    }
+
+    if (state.filters.insightOnly) {
+      parts.push("Com insight");
+    }
+
+    if (state.filters.sourceMin > 0) {
+      parts.push(`${state.filters.sourceMin}+ fontes`);
+    }
+
+    if (state.filters.search) {
+      parts.push(`Busca: "${state.filters.search}"`);
+    }
+
+    return parts.join(" · ");
+  }
+
+  function buildMetricCards(operation) {
+    const nextWindowText = operation.nextWindow
+      ? `${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
+      : "--:--";
+
+    return [
+      {
+        label: "Assinantes ativos",
+        value: operation.subscriberCount,
+        meta: "Base pronta para receber o próximo envio.",
+        action: "focus:metricsRow",
+        tone: "",
+      },
+      {
+        label: "Lotes de hoje",
+        value: operation.todaySummaryCount,
+        meta: "Abre a leitura completa dos resumos já gerados.",
+        action: "view:reading",
+        tone: "",
+      },
+      {
+        label: "Próxima janela",
+        value: nextWindowText,
+        meta: operation.nextWindow
+          ? `${operation.nextWindow.periodLabel}${operation.nextWindow.isTomorrow ? " de amanhã" : " de hoje"}`
+          : "Agenda ainda não carregada.",
+        action: "focus:miniTimeline",
+        tone: operation.nextWindow ? "warn" : "",
+        countdownTarget: operation.nextWindow?.scheduledAt || "",
+      },
+      {
+        label: "Health score",
+        value: `${operation.healthScore}%`,
+        meta: operation.inactiveFeedCount
+          ? `${pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção")}.`
+          : "Operação sem alerta estrutural no momento.",
+        action: "focus:feedAlerts",
+        tone: healthTone(operation.healthScore) === "danger" ? "danger" : healthTone(operation.healthScore) === "warn" ? "warn" : "",
+      },
+    ];
+  }
+
+  function buildNarrative(operation) {
+    const bridge = bridgeMeta(operation.bridge);
+    const attention = [];
+
+    if (operation.pendingSummaryCount > 0) {
+      attention.push(pluralize(operation.pendingSummaryCount, "pendência aberta", "pendências abertas"));
+    }
+    if (operation.failedDeliveryCount > 0) {
+      attention.push(pluralize(operation.failedDeliveryCount, "falha de entrega", "falhas de entrega"));
+    }
+    if (operation.inactiveFeedCount > 0) {
+      attention.push(pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção"));
+    }
+
+    const nextWindow = operation.nextWindow
+      ? `${operation.nextWindow.periodLabel} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
+      : "sem próxima janela definida";
+
+    const suffix = attention.length
+      ? ` Pontos de atenção: ${attention.join(", ")}.`
+      : " Nenhum alerta crítico no momento.";
+
+    return `${bridge.label}. ${pluralize(
+      operation.subscriberCount,
+      "assinante ativo",
+      "assinantes ativos",
+    )} e ${pluralize(operation.todaySummaryCount, "lote gerado hoje", "lotes gerados hoje")}. Próxima janela: ${nextWindow}.${suffix}`;
+  }
+
+  function renderTopbar() {
+    const operation = operationData();
+
+    if (operation) {
+      const bridge = bridgeMeta(operation.bridge);
+      setTag(byId("bridgePill"), bridge.label, bridge.tone);
+      setTag(byId("healthPill"), `Health ${operation.healthScore}%`, healthTone(operation.healthScore));
+    } else {
+      setTag(byId("bridgePill"), "Bridge: ...", "");
+      setTag(byId("healthPill"), "Health --", "");
+    }
+
+    const refreshButton = byId("btnRefresh");
+    if (refreshButton) {
+      refreshButton.disabled = state.loading;
+      refreshButton.textContent = state.loading ? "Atualizando..." : "Recarregar";
+    }
+
+    byId("nav-ops")?.classList.toggle("is-active", state.view === "ops");
+    byId("nav-reading")?.classList.toggle("is-active", state.view === "reading");
+  }
+
+  function renderMiniTimeline(timeline) {
+    const node = byId("miniTimeline");
+    if (!node) return;
+
+    if (!timeline.length) {
+      node.innerHTML = '<div class="empty-state">Agenda do dia indisponível.</div>';
+      return;
+    }
+
+    node.innerHTML = timeline
+      .map((item) => {
+        const meta = statusMeta(item.status);
+        let caption = "Sem detalhe adicional.";
+
+        if (item.details) {
+          caption = `${item.details.articlesCollected || 0} art. · ${item.details.summariesGenerated || 0} res. · ${item.details.messagesSent || 0} env.`;
+        } else if (item.status === "upcoming") {
+          caption = "Janela futura ainda não executada.";
+        } else if (item.status === "pending") {
+          caption = "Janela vencida sem run registrada.";
+        }
+
+        return `
+          <article class="mini-slot is-${escapeHtml(item.status)}${item.isCurrentWindow ? " is-current" : ""}">
+            <strong>${escapeHtml(item.periodLabel)}</strong>
+            <small>${escapeHtml(item.timeLabel)} · ${escapeHtml(meta.label)}</small>
+            <p>${escapeHtml(caption)}</p>
+          </article>
+        `;
+      })
+      .join("");
+  }
+
+  function renderRecentRuns(runs) {
+    const node = byId("recentRuns");
+    if (!node) return;
+
+    if (!runs.length) {
+      node.innerHTML = '<div class="empty-state">Nenhuma execução recente registrada.</div>';
+      return;
+    }
+
+    node.innerHTML = runs
+      .map((run) => {
+        const meta = statusMeta(run.status);
+        const timeBits = [
+          run.startedAtLabel && run.startedAtLabel !== "--" ? `Início ${run.startedAtLabel}` : null,
+          run.finishedAtLabel && run.finishedAtLabel !== "--" ? `fim ${run.finishedAtLabel}` : null,
+          run.durationSeconds ? `${run.durationSeconds}s` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+        const runMetrics = `${run.articlesCollected || 0} art. · ${run.summariesGenerated || 0} resumos · ${run.messagesSent || 0} envios`;
+
+        return `
+          <article class="run-item">
+            <div>
+              <div class="run-title-row">
+                <strong>${escapeHtml(run.periodLabel)}</strong>
+                <span class="tag-premium is-${escapeHtml(meta.tone)}">${escapeHtml(meta.label)}</span>
+              </div>
+              <span class="run-time">${escapeHtml(timeBits || "Horário indisponível")}</span>
+              ${
+                run.errorSnippet
+                  ? `<span class="run-time">${escapeHtml(run.errorSnippet)}</span>`
+                  : ""
+              }
+            </div>
+            <div class="run-metrics">${escapeHtml(runMetrics)}</div>
+          </article>
+        `;
+      })
+      .join("");
+  }
+
+  function renderFeedAlerts(feeds) {
+    const node = byId("feedAlerts");
+    if (!node) return;
+
+    if (!feeds.length) {
+      node.innerHTML = '<div class="empty-state">Nenhum feed em atenção no momento.</div>';
+      return;
+    }
+
+    node.innerHTML = feeds
+      .map(
+        (feed) => `
+          <article class="feed-item">
+            <strong>${escapeHtml(feed.name)}</strong>
+            <span>${escapeHtml(feed.category || "Categoria não informada")}</span>
+            <p>${escapeHtml(feed.lastError || "Fonte inativa sem detalhe adicional registrado.")}</p>
+          </article>
+        `,
+      )
+      .join("");
+  }
+
+  function renderOperation() {
+    byId("view-ops")?.classList.toggle("active", state.view === "ops");
+
+    const metricsRow = byId("metricsRow");
+    const operation = operationData();
+
+    if (!metricsRow) return;
+
+    if (!operation) {
+      metricsRow.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton-state">Carregando...</div>').join("");
+      byId("opsNarrative").textContent = "Carregando panorama operacional...";
+      setTag(byId("opsStatusTag"), "Status: ...", "");
+      setTag(byId("scheduleTag"), "Agenda: --", "");
+      setTag(byId("lastUpdatedAt"), "Atualizado: --", "");
+      byId("pendingSummaries").textContent = "--";
+      byId("failedDeliveries").textContent = "--";
+      byId("bridgeStatusText").textContent = "--";
+      byId("nextSendLabel").textContent = "--";
+      renderMiniTimeline([]);
+      renderRecentRuns([]);
+      renderFeedAlerts([]);
+      return;
+    }
+
+    const metrics = buildMetricCards(operation);
+    metricsRow.innerHTML = metrics
+      .map(
+        (metric) => `
+          <button
+            class="metric-card${metric.tone ? ` is-${escapeHtml(metric.tone)}` : ""}"
+            type="button"
+            data-metric-action="${escapeHtml(metric.action)}"
+          >
+            <span class="metric-label">${escapeHtml(metric.label)}</span>
+            <span class="metric-value">${escapeHtml(metric.value)}</span>
+            ${
+              metric.countdownTarget
+                ? `<span class="countdown-label" data-countdown-target="${escapeHtml(metric.countdownTarget)}"></span>`
+                : ""
+            }
+            <div class="metric-meta">${escapeHtml(metric.meta)}</div>
+          </button>
+        `,
+      )
+      .join("");
+
+    const scoreTone = healthTone(operation.healthScore);
+    const scoreText =
+      scoreTone === "ok"
+        ? "Operação estável"
+        : scoreTone === "warn"
+          ? "Atenção moderada"
+          : "Atenção imediata";
+
+    setTag(byId("opsStatusTag"), scoreText, scoreTone);
+    setTag(
+      byId("scheduleTag"),
+      operation.schedule?.map((item) => item.timeLabel).join(" · ") || "Agenda indisponível",
+      "",
+    );
+    setTag(byId("lastUpdatedAt"), `Atualizado ${formatDateTime(operation.lastUpdatedAt)}`, "");
+
+    byId("opsNarrative").textContent = buildNarrative(operation);
+    byId("pendingSummaries").textContent = pluralize(operation.pendingSummaryCount, "resumo", "resumos");
+    byId("failedDeliveries").textContent = pluralize(operation.failedDeliveryCount, "falha", "falhas");
+    byId("bridgeStatusText").textContent = operation.bridge?.connected
+      ? "Online"
+      : operation.bridge?.status || "Offline";
+    byId("nextSendLabel").textContent = operation.nextWindow
+      ? `${operation.nextWindow.periodLabel} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
+      : "--";
+
+    renderMiniTimeline(operation.timeline || []);
+    renderRecentRuns(operation.recentRuns || []);
+    renderFeedAlerts(operation.inactiveFeeds || []);
+  }
+
+  function renderCategoryNav() {
+    const node = byId("categoryNav");
+    if (!node) return;
+
+    const options = categoryOptions();
+    node.innerHTML = options
+      .map(
+        (option) => `
+          <button
+            class="cat-nav-btn${state.currentCategory === option.value ? " is-active" : ""}"
+            type="button"
+            data-category="${escapeHtml(option.value)}"
+          >
+            <span>${escapeHtml(option.label)}</span>
+            <span class="cat-count">${escapeHtml(option.count)}</span>
+          </button>
+        `,
+      )
+      .join("");
+  }
+
+  function renderFilters() {
+    const sortControl = byId("sortControl");
+    const periodControl = byId("periodControl");
+    const statusControl = byId("statusControl");
+    const sourceControl = byId("sourceControl");
+    const searchInput = byId("searchInput");
+    const clearButton = byId("btn-clearFilters");
+
+    if (searchInput && searchInput.value !== state.filters.search) {
+      searchInput.value = state.filters.search;
+    }
+
+    if (sortControl) {
+      sortControl.innerHTML = SORT_OPTIONS.map(
+        (option) => `
+          <button
+            class="sort-chip${state.filters.sort === option.value ? " is-active" : ""}"
+            type="button"
+            data-filter-kind="sort"
+            data-filter-value="${escapeHtml(option.value)}"
+          >
+            ${escapeHtml(option.label)}
+          </button>
+        `,
+      ).join("");
+    }
+
+    if (periodControl) {
+      periodControl.innerHTML = PERIOD_OPTIONS.map(
+        (option) => `
+          <button
+            class="period-chip${state.filters.periods.has(option.value) ? " is-active" : ""}"
+            type="button"
+            data-filter-kind="period"
+            data-filter-value="${escapeHtml(option.value)}"
+          >
+            ${escapeHtml(option.label)}
+          </button>
+        `,
+      ).join("");
+    }
+
+    if (statusControl) {
+      statusControl.innerHTML = STATUS_OPTIONS.map(
+        (option) => `
+          <button
+            class="status-chip${state.filters.statuses.has(option.value) ? " is-active" : ""}"
+            type="button"
+            data-filter-kind="status"
+            data-filter-value="${escapeHtml(option.value)}"
+          >
+            ${escapeHtml(option.label)}
+          </button>
+        `,
+      ).join("");
+    }
+
+    if (sourceControl) {
+      sourceControl.innerHTML = [
+        `
+          <button
+            class="source-chip${state.filters.insightOnly ? " is-active" : ""}"
+            type="button"
+            data-filter-kind="insight"
+            data-filter-value="true"
+          >
+            Com insight
+          </button>
+        `,
+        ...SOURCE_OPTIONS.map(
+          (option) => `
+            <button
+              class="source-chip${state.filters.sourceMin === option.value ? " is-active" : ""}"
+              type="button"
+              data-filter-kind="source"
+              data-filter-value="${escapeHtml(option.value)}"
+            >
+              ${escapeHtml(option.label)}
+            </button>
+          `,
+        ),
+      ].join("");
+    }
+
+    if (clearButton) {
+      clearButton.disabled = !hasActiveFilters();
     }
   }
 
-  function handleSummaryClick(event) {
-    const card = event.target.closest(".summary-card");
-    if (!card) return;
-
-    event.preventDefault();
-    const summaryId = Number(card.dataset.summaryId);
-    if (!Number.isFinite(summaryId)) return;
-
-    openSummaryById(summaryId, card, event);
+  function buildCardPreview(card) {
+    if (Array.isArray(card.bullets) && card.bullets.length > 0) {
+      return card.bullets[0];
+    }
+    if (card.insight) {
+      return card.insight;
+    }
+    if (Array.isArray(card.bodySections) && card.bodySections.length > 0) {
+      return card.bodySections[0].content || "Sem prévia disponível.";
+    }
+    return card.summaryText || "Sem prévia disponível.";
   }
 
-  function handleSummaryKeyDown(event) {
-    const card = event.target.closest(".summary-card");
-    if (!card) return;
+  function renderDrawer(card) {
+    const drawer = byId("summaryDrawer");
+    const backdrop = byId("drawerBackdrop");
 
-    if (event.key !== "Enter" && event.key !== " ") return;
+    if (!drawer || !backdrop) return;
 
-    event.preventDefault();
-    const summaryId = Number(card.dataset.summaryId);
-    if (!Number.isFinite(summaryId)) return;
+    if (!card) {
+      state.drawer.open = false;
+      state.drawer.cardId = null;
+      drawer.classList.remove("is-open");
+      drawer.setAttribute("aria-hidden", "true");
+      backdrop.classList.remove("is-open");
+      return;
+    }
 
-    openSummaryById(summaryId, card, null);
+    drawer.classList.add("is-open");
+    drawer.setAttribute("aria-hidden", "false");
+    backdrop.classList.add("is-open");
+
+    setTag(byId("drawerTag"), `${card.categoryLabel} · ${card.periodLabel}`, card.isPending ? "warn" : "ok");
+    byId("drawerTitle").textContent = card.header || "Resumo";
+    byId("drawerMeta").textContent = [
+      card.createdAtLabel ? `Criado às ${card.createdAtLabel}` : null,
+      card.sentAtLabel ? `Enviado às ${card.sentAtLabel}` : "Ainda pendente de envio",
+      `${card.sourceCount} ${card.sourceCount === 1 ? "fonte" : "fontes"}`,
+      card.modelUsed || null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    byId("drawerBullets").innerHTML = (card.bullets || []).length
+      ? card.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")
+      : "<li>Nenhum destaque estruturado disponível.</li>";
+
+    const insightSection = byId("drawerInsightSection");
+    if (card.insight) {
+      insightSection.style.display = "";
+      byId("drawerInsight").textContent = card.insight;
+    } else {
+      insightSection.style.display = "none";
+      byId("drawerInsight").textContent = "";
+    }
+
+    const sectionsNode = byId("drawerSections");
+    const sections = Array.isArray(card.bodySections) && card.bodySections.length ? card.bodySections : [];
+    sectionsNode.innerHTML = sections.length
+      ? sections
+          .map(
+            (section) => `
+              <article class="drawer-text-block">
+                <strong>${escapeHtml(section.title || "Resumo")}</strong>
+                <p>${escapeHtml(section.content || "")}</p>
+              </article>
+            `,
+          )
+          .join("")
+      : `
+          <article class="drawer-text-block">
+            <strong>Leitura completa</strong>
+            <p>${escapeHtml(card.summaryText || "Sem conteúdo adicional disponível.")}</p>
+          </article>
+        `;
+
+    const sourcesSection = byId("drawerSourcesSection");
+    if ((card.sourceUrls || []).length > 0) {
+      sourcesSection.style.display = "";
+      byId("drawerSources").innerHTML = card.sourceUrls
+        .map(
+          (url) => `
+            <li>
+              <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">
+                ${escapeHtml(url)}
+              </a>
+            </li>
+          `,
+        )
+        .join("");
+    } else {
+      sourcesSection.style.display = "none";
+      byId("drawerSources").innerHTML = "";
+    }
   }
 
-  async function triggerPipeline(period) {
-    await runButtonAction(`btn-${period}`, "Executando...", async () => {
-      const payload = await fetchJson(`/run-pipeline/${period}`, { method: "POST" });
-      showToast(payload.message || `Pipeline ${formatPeriod(period)} iniciado.`);
-      window.setTimeout(loadData, 1200);
-    });
+  function renderReading() {
+    byId("view-reading")?.classList.toggle("active", state.view === "reading");
+
+    renderCategoryNav();
+    renderFilters();
+
+    const title = byId("readingResultsTitle");
+    const count = byId("readingResultCount");
+    const contextTag = byId("readingContextTag");
+    const list = byId("summaries");
+    const cards = filteredCards();
+
+    const category = categoryOptions().find((option) => option.value === state.currentCategory);
+    if (title) {
+      title.textContent = state.currentCategory === "all" ? "Resumos do dia" : category?.label || "Resumos";
+    }
+    if (count) {
+      count.textContent = pluralize(cards.length, "resumo", "resumos");
+    }
+    if (contextTag) {
+      contextTag.textContent = activeContextLabel();
+    }
+
+    if (!list) return;
+
+    if (!state.payload) {
+      list.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton-state">Carregando resumos...</div>').join("");
+      renderDrawer(null);
+      return;
+    }
+
+    if (!cards.length) {
+      list.innerHTML =
+        '<div class="empty-state">Nenhum resumo encontrado. Ajuste os filtros ou limpe a busca.</div>';
+      renderDrawer(null);
+      return;
+    }
+
+    list.innerHTML = cards
+      .map((card) => {
+        const preview = buildCardPreview(card);
+        const footItems = [
+          card.createdAtLabel ? `Criado ${card.createdAtLabel}` : null,
+          `${card.sourceCount} ${card.sourceCount === 1 ? "fonte" : "fontes"}`,
+          card.hasInsight ? "Insight" : null,
+          card.modelUsed || null,
+        ].filter(Boolean);
+
+        return `
+          <button
+            class="summary-card${card.isPending ? " is-pending" : ""}${state.drawer.cardId === card.id ? " is-selected" : ""}"
+            type="button"
+            data-card-id="${escapeHtml(card.id)}"
+          >
+            <div class="summary-card-meta">
+              <span>${escapeHtml(card.categoryLabel)} · ${escapeHtml(card.periodLabel)}</span>
+              <span>${escapeHtml(card.isPending ? "Pendente" : "Enviado")}</span>
+            </div>
+            <p class="summary-card-title">${escapeHtml(card.header)}</p>
+            <div class="summary-card-preview">${escapeHtml(preview)}</div>
+            <div class="summary-card-foot">
+              ${footItems.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+            </div>
+          </button>
+        `;
+      })
+      .join("");
+
+    renderDrawer(selectedCard(cards));
   }
 
-  async function retryTodayDelivery() {
-    await runButtonAction("btn-retry", "Reenviando...", async () => {
-      const payload = await fetchJson("/api/retry-delivery/today", { method: "POST" });
+  function render() {
+    renderTopbar();
+    renderOperation();
+    renderReading();
+    updateClock();
+  }
 
-      if (payload.status === "completed") {
-        showToast(`Reenvio concluído para ${payload.sentSubscribers} assinante(s).`);
-      } else {
-        showToast(payload.message || "Nenhuma pendência encontrada.");
+  async function parseResponse(response) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      return response.json();
+    }
+    return { message: await response.text() };
+  }
+
+  async function fetchDashboard() {
+    state.loading = true;
+    render();
+
+    try {
+      const response = await fetch("/api/dashboard", {
+        headers: { Accept: "application/json" },
+      });
+      const payload = await parseResponse(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Não foi possível carregar a dashboard.");
       }
 
-      await loadData();
-    });
+      state.payload = payload;
+      ensureValidState();
+      state.loading = false;
+      render();
+    } catch (error) {
+      state.loading = false;
+      render();
+      showToast(error.message || "Falha ao carregar dashboard.", "danger");
+    }
   }
 
-  function attachEvents() {
-    document.querySelectorAll(".nav-btn").forEach((button) => {
-      button.addEventListener("click", () => switchView(button.dataset.view));
-    });
+  async function runManualAction(period) {
+    const endpoint = period === "retry" ? "/api/retry-delivery/today" : `/run-pipeline/${period}`;
 
-    document.querySelectorAll(".cat-nav-btn").forEach((button) => {
-      button.addEventListener("click", () => setGroupFilter(button.dataset.group));
-    });
+    try {
+      const response = await fetch(endpoint, { method: "POST" });
+      const payload = await parseResponse(response);
 
-    document.querySelectorAll(".sort-chip").forEach((button) => {
-      button.addEventListener("click", () => setSort(button.dataset.sort));
-    });
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Falha ao executar a ação.");
+      }
 
-    document.querySelectorAll(".period-chip").forEach((button) => {
-      button.addEventListener("click", () => togglePeriodFilter(button.dataset.filterPeriod));
-    });
+      showToast(payload.message || "Ação executada.", "ok");
+      window.setTimeout(fetchDashboard, 900);
+    } catch (error) {
+      showToast(error.message || "Falha ao executar a ação.", "danger");
+    }
+  }
 
-    byId("btnRefresh")?.addEventListener("click", loadData);
+  function focusSection(id) {
+    if (state.view !== "ops") {
+      setView("ops");
+    }
+
+    window.setTimeout(() => {
+      byId(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }
+
+  function toggleSetEntry(setRef, value) {
+    if (setRef.has(value)) {
+      setRef.delete(value);
+    } else {
+      setRef.add(value);
+    }
+  }
+
+  function handleUiAction(action) {
+    if (!action) return;
+
+    if (action === "view:reading") {
+      setView("reading");
+      return;
+    }
+
+    if (action === "reading:pending") {
+      state.currentCategory = "all";
+      state.filters.statuses = new Set(["pending"]);
+      state.view = "reading";
+      savePreferences();
+      render();
+      return;
+    }
+
+    if (action.startsWith("focus:")) {
+      focusSection(action.replace("focus:", ""));
+    }
+  }
+
+  function handleFilterClick(event) {
+    const button = event.target.closest("[data-filter-kind]");
+    if (!button) return;
+
+    const kind = button.dataset.filterKind;
+    const value = button.dataset.filterValue;
+
+    if (kind === "sort") {
+      state.filters.sort = value === "oldest" ? "oldest" : "newest";
+    }
+    if (kind === "period") {
+      toggleSetEntry(state.filters.periods, value);
+    }
+    if (kind === "status") {
+      toggleSetEntry(state.filters.statuses, value);
+    }
+    if (kind === "source") {
+      state.filters.sourceMin = Number(value || 0);
+    }
+    if (kind === "insight") {
+      state.filters.insightOnly = !state.filters.insightOnly;
+    }
+
+    savePreferences();
+    render();
+  }
+
+  function bindEvents() {
+    byId("nav-ops")?.addEventListener("click", () => setView("ops"));
+    byId("nav-reading")?.addEventListener("click", () => setView("reading"));
+    byId("btnRefresh")?.addEventListener("click", fetchDashboard);
+    byId("btn-retry")?.addEventListener("click", () => runManualAction("retry"));
+    byId("drawerClose")?.addEventListener("click", hideDrawer);
+    byId("drawerBackdrop")?.addEventListener("click", hideDrawer);
     byId("btn-clearFilters")?.addEventListener("click", clearFilters);
-    byId("btn-retry")?.addEventListener("click", retryTodayDelivery);
 
     document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
-      button.addEventListener("click", () => triggerPipeline(button.dataset.pipelinePeriod));
+      button.addEventListener("click", () => runManualAction(button.dataset.pipelinePeriod));
     });
 
-    const searchInput = byId("searchInput");
-    if (searchInput) {
-      searchInput.addEventListener("input", (event) => {
-        state.filters.search = event.target.value || "";
-        renderSummaries();
-      });
-    }
+    byId("searchInput")?.addEventListener("input", (event) => {
+      state.filters.search = event.target.value || "";
+      savePreferences();
+      render();
+    });
 
-    const summaryContainer = byId("summaries");
-    if (summaryContainer) {
-      summaryContainer.addEventListener("pointerdown", handleSummaryPointerDown);
-      summaryContainer.addEventListener("click", handleSummaryClick);
-      summaryContainer.addEventListener("keydown", handleSummaryKeyDown);
-    }
+    byId("categoryNav")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-category]");
+      if (!button) return;
+      state.currentCategory = button.dataset.category || "all";
+      savePreferences();
+      render();
+    });
 
-    document.addEventListener("pointerup", clearPressedCards);
-    document.addEventListener("pointercancel", clearPressedCards);
+    byId("sortControl")?.addEventListener("click", handleFilterClick);
+    byId("periodControl")?.addEventListener("click", handleFilterClick);
+    byId("statusControl")?.addEventListener("click", handleFilterClick);
+    byId("sourceControl")?.addEventListener("click", handleFilterClick);
 
-    byId("drawerClose")?.addEventListener("click", () => closeSummaryDrawer(true));
-    byId("drawerBackdrop")?.addEventListener("click", () => closeSummaryDrawer(true));
+    byId("metricsRow")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-metric-action]");
+      if (!button) return;
+      handleUiAction(button.dataset.metricAction);
+    });
+
+    document.querySelector(".ops-report-grid")?.addEventListener("click", (event) => {
+      const item = event.target.closest("[data-quick-action]");
+      if (!item) return;
+      handleUiAction(item.dataset.quickAction);
+    });
+
+    document.querySelector(".ops-report-grid")?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const item = event.target.closest("[data-quick-action]");
+      if (!item) return;
+      event.preventDefault();
+      handleUiAction(item.dataset.quickAction);
+    });
+
+    byId("summaries")?.addEventListener("click", (event) => {
+      const card = event.target.closest("[data-card-id]");
+      if (!card) return;
+      openDrawer(Number(card.dataset.cardId));
+    });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && state.drawer.isOpen) {
-        closeSummaryDrawer(true);
+      if (event.key === "Escape" && state.drawer.open) {
+        hideDrawer();
       }
     });
-
-    if (typeof reducedMotionQuery.addEventListener === "function") {
-      reducedMotionQuery.addEventListener("change", (event) => {
-        state.reducedMotion = !!event.matches;
-      });
-    }
-
-    const tick = () => {
-      setText(
-        "clock",
-        new Date().toLocaleTimeString("pt-BR", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        }),
-      );
-      updateCountdown();
-    };
-
-    tick();
-    window.setInterval(tick, 1000);
   }
 
   loadPreferences();
-  attachEvents();
-  applyPreferences();
-  updateFilterControls();
-  renderSummaries();
-  loadData();
-  window.setInterval(loadData, AUTO_REFRESH_MS);
+  startClock();
+  bindEvents();
+  render();
+  fetchDashboard();
+  window.setInterval(fetchDashboard, AUTO_REFRESH_MS);
 })();

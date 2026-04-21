@@ -1,131 +1,108 @@
-"""Tests for webhook validation and processing."""
+"""Tests for webhook validation and admin-protected endpoints."""
+import base64
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app import app, WhatsAppWebhookPayload
+import app as app_module
+from app import WhatsAppWebhookPayload, app
 from config.settings import settings
 
-
 client = TestClient(app)
-
-# Use a test token for webhook authentication
 TEST_WEBHOOK_TOKEN = "test-webhook-token-12345"
+
 
 @pytest.fixture(autouse=True)
 def set_webhook_token(monkeypatch):
-    """Set webhook token for tests."""
     monkeypatch.setattr(settings, "whatsapp_bridge_token", TEST_WEBHOOK_TOKEN)
 
 
 def _get_webhook_headers():
-    """Generate valid Authorization header for webhook tests."""
     return {"Authorization": f"Bearer {TEST_WEBHOOK_TOKEN}"}
 
 
+def _get_admin_headers():
+    encoded = base64.b64encode(f"{settings.admin_username}:{settings.admin_password}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {encoded}"}
+
+
 def test_webhook_valid_payload():
-    """Test webhook with valid payload."""
     payload = {
         "key": {"remoteJid": "551234567890@s.whatsapp.net"},
-        "message": {"conversation": "Hello!"}
+        "message": {"conversation": "Hello!"},
     }
-    
     response = client.post("/webhook/whatsapp", json=payload, headers=_get_webhook_headers())
     assert response.status_code == 200
 
 
 def test_webhook_invalid_json():
-    """Test webhook with invalid JSON."""
     response = client.post(
         "/webhook/whatsapp",
         content="not json",
-        headers={
-            "Content-Type": "application/json",
-            **_get_webhook_headers()
-        }
+        headers={"Content-Type": "application/json", **_get_webhook_headers()},
     )
     assert response.status_code == 400
     assert "error" in response.json()
 
 
 def test_webhook_missing_key():
-    """Test webhook with missing 'key' field."""
-    payload = {
-        "message": {"conversation": "Hello!"}
-    }
-    
+    payload = {"message": {"conversation": "Hello!"}}
     response = client.post("/webhook/whatsapp", json=payload, headers=_get_webhook_headers())
     assert response.status_code == 422
     assert "error" in response.json()
 
 
 def test_webhook_missing_message():
-    """Test webhook with missing 'message' field."""
-    payload = {
-        "key": {"remoteJid": "551234567890@s.whatsapp.net"}
-    }
-    
+    payload = {"key": {"remoteJid": "551234567890@s.whatsapp.net"}}
     response = client.post("/webhook/whatsapp", json=payload, headers=_get_webhook_headers())
     assert response.status_code == 422
 
 
 def test_webhook_empty_message():
-    """Test webhook with empty conversation."""
     payload = {
         "key": {"remoteJid": "551234567890@s.whatsapp.net"},
-        "message": {"conversation": "   "}  # Only whitespace
+        "message": {"conversation": "   "},
     }
-    
     response = client.post("/webhook/whatsapp", json=payload, headers=_get_webhook_headers())
-    # Will be 400 after stripping
     assert response.status_code in [400, 422]
 
 
 def test_webhook_missing_remote_jid():
-    """Test webhook with missing remoteJid."""
-    payload = {
-        "key": {},
-        "message": {"conversation": "Hello!"}
-    }
-    
+    payload = {"key": {}, "message": {"conversation": "Hello!"}}
     response = client.post("/webhook/whatsapp", json=payload, headers=_get_webhook_headers())
     assert response.status_code == 422
 
 
 def test_webhook_missing_authorization_header():
-    """Test webhook rejects requests without Authorization header."""
     payload = {
         "key": {"remoteJid": "551234567890@s.whatsapp.net"},
-        "message": {"conversation": "Hello!"}
+        "message": {"conversation": "Hello!"},
     }
-    
     response = client.post("/webhook/whatsapp", json=payload)
     assert response.status_code == 401
     assert "Unauthorized" in response.json()["error"]
 
 
 def test_webhook_invalid_token():
-    """Test webhook rejects requests with invalid token."""
     payload = {
         "key": {"remoteJid": "551234567890@s.whatsapp.net"},
-        "message": {"conversation": "Hello!"}
+        "message": {"conversation": "Hello!"},
     }
-    
     response = client.post(
-        "/webhook/whatsapp", 
+        "/webhook/whatsapp",
         json=payload,
-        headers={"Authorization": "Bearer invalid-token"}
+        headers={"Authorization": "Bearer invalid-token"},
     )
     assert response.status_code == 403
     assert "Forbidden" in response.json()["error"]
 
 
 def test_pydantic_webhook_validation():
-    """Test Pydantic model directly."""
-    # Valid payload
     valid_payload = {
         "key": {"remoteJid": "551234567890@s.whatsapp.net"},
-        "message": {"conversation": "Hello"}
+        "message": {"conversation": "Hello"},
     }
     model = WhatsAppWebhookPayload(**valid_payload)
     assert model.key.remoteJid == "551234567890@s.whatsapp.net"
@@ -133,58 +110,54 @@ def test_pydantic_webhook_validation():
 
 
 def test_pydantic_webhook_validation_empty_message():
-    """Test Pydantic rejects empty message."""
     invalid_payload = {
         "key": {"remoteJid": "551234567890@s.whatsapp.net"},
-        "message": {"conversation": ""}
+        "message": {"conversation": ""},
     }
-    
     with pytest.raises(ValidationError):
         WhatsAppWebhookPayload(**invalid_payload)
 
 
 def test_pydantic_webhook_validation_empty_jid():
-    """Test Pydantic rejects empty remoteJid."""
     invalid_payload = {
         "key": {"remoteJid": ""},
-        "message": {"conversation": "Hello"}
+        "message": {"conversation": "Hello"},
     }
-    
     with pytest.raises(ValidationError):
         WhatsAppWebhookPayload(**invalid_payload)
 
 
 def test_health_endpoint():
-    """Test health check endpoint."""
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
+def test_dashboard_requires_admin_auth():
+    response = client.get("/api/dashboard")
+    assert response.status_code == 401
+
+
 def test_dashboard_accepts_list_key_takeaways(monkeypatch):
-    """Dashboard should handle legacy list-shaped takeaways without crashing."""
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
-    import db.engine as db_engine
 
     summary = MagicMock()
     summary.id = 1
     summary.category = "tech"
     summary.period = "morning"
     summary.key_takeaways = ["Point 1", "Point 2"]
-    summary.summary_text = "Resumo Tech\nLinha complementar"
+    summary.summary_text = "Resumo Tech\n\nLinha complementar"
     summary.source_article_ids = []
     summary.date = datetime.now(timezone.utc).date()
     summary.created_at = datetime.now(timezone.utc)
+    summary.sent_at = None
+    summary.model_used = "test-model"
 
     class DummyResult:
-        def __init__(self, scalar_value=None, items=None, rows=None):
-            self._scalar_value = scalar_value
+        def __init__(self, items=None, rows=None):
             self._items = items or []
             self._rows = rows or []
-
-        def scalar(self):
-            return self._scalar_value
 
         def scalars(self):
             return self
@@ -194,7 +167,8 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
 
     class DummySession:
         def __init__(self):
-            self.calls = 0
+            self.scalar_calls = 0
+            self.execute_calls = 0
 
         async def __aenter__(self):
             return self
@@ -202,44 +176,60 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
+        async def scalar(self, statement):
+            self.scalar_calls += 1
+            return [1, 0, 0][self.scalar_calls - 1]
+
         async def execute(self, statement):
-            self.calls += 1
-            if self.calls == 1:
-                return DummyResult(scalar_value=1)
-            if self.calls == 2:
+            self.execute_calls += 1
+            if self.execute_calls == 1:
                 return DummyResult(items=[summary])
-            if self.calls == 3:
-                return DummyResult(scalar_value=0)
-            return DummyResult(items=[])
+            if self.execute_calls == 2:
+                return DummyResult(items=[])
+            if self.execute_calls == 3:
+                return DummyResult(items=[])
+            if self.execute_calls == 4:
+                return DummyResult(items=[])
+            return DummyResult(rows=[])
 
-    monkeypatch.setattr(db_engine, "async_session", lambda: DummySession())
+    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
+    monkeypatch.setattr(app_module, "fetch_whatsapp_status", AsyncMock(return_value={"status": "connected", "connected": True}))
 
-    response = client.get("/api/dashboard")
+    response = client.get("/api/dashboard", headers=_get_admin_headers())
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summaries"][0]["bullets"] == ["Point 1", "Point 2"]
-    assert payload["summaries"][0]["insight"] == ""
-    assert payload["summaries"][0]["summaryText"] == "Resumo Tech\nLinha complementar"
-    assert payload["summaries"][0]["sourceUrls"] == []
-    assert payload["summaries"][0]["sourceCount"] == 0
-    assert payload["recentRuns"] == []
+    card = payload["reading"]["cards"][0]
+    assert card["bullets"] == ["Point 1", "Point 2"]
+    assert card["insight"] == ""
+    assert card["sourceUrls"] == []
+    assert card["sourceCount"] == 0
+    assert card["bodySections"][0]["content"] == "Linha complementar"
 
 
 def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
-    """Dashboard should expose full summary text, ordered sources, and recent pipeline runs."""
     from datetime import date, datetime, timezone
     from unittest.mock import MagicMock
-    import db.engine as db_engine
 
     summary = MagicMock()
     summary.id = 99
     summary.category = "economia-brasil"
     summary.period = "evening"
-    summary.key_takeaways = {"bullets": ["Primeiro ponto"], "insight": "Insight principal"}
-    summary.summary_text = "Brasil Econômico — Noite\nLinha 1 do corpo\nLinha 2 do corpo"
+    summary.key_takeaways = {
+        "version": 2,
+        "header": "💵 Economia Nacional — Noite",
+        "bullets": ["Primeiro ponto relevante", "Segundo ponto relevante", "Terceiro ponto relevante"],
+        "insight": "Insight principal com contexto suficiente para exibição.",
+        "sections": [
+            {"key": "o_que_mudou", "title": "O que mudou", "content": "Linha 1 do corpo"},
+            {"key": "por_que_importa", "title": "Por que importa", "content": "Linha 2 do corpo"},
+        ],
+    }
+    summary.summary_text = "💵 Economia Nacional — Noite\n\nLinha 1 do corpo\n\nLinha 2 do corpo"
     summary.source_article_ids = [7, 9, 7]
     summary.date = date(2026, 4, 21)
     summary.created_at = datetime(2026, 4, 21, 1, 8, tzinfo=timezone.utc)
+    summary.sent_at = None
+    summary.model_used = "test-model"
 
     run = MagicMock()
     run.id = 10
@@ -248,17 +238,14 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
     run.articles_collected = 12
     run.summaries_generated = 6
     run.messages_sent = 2
+    run.error_log = ""
     run.started_at = datetime(2026, 4, 21, 1, 0, tzinfo=timezone.utc)
     run.finished_at = datetime(2026, 4, 21, 1, 3, tzinfo=timezone.utc)
 
     class DummyResult:
-        def __init__(self, scalar_value=None, items=None, rows=None):
-            self._scalar_value = scalar_value
+        def __init__(self, items=None, rows=None):
             self._items = items or []
             self._rows = rows or []
-
-        def scalar(self):
-            return self._scalar_value
 
         def scalars(self):
             return self
@@ -268,7 +255,8 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
 
     class DummySession:
         def __init__(self):
-            self.calls = 0
+            self.scalar_calls = 0
+            self.execute_calls = 0
 
         async def __aenter__(self):
             return self
@@ -276,45 +264,47 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
+        async def scalar(self, statement):
+            self.scalar_calls += 1
+            return [2, 1, 0][self.scalar_calls - 1]
+
         async def execute(self, statement):
-            self.calls += 1
-            if self.calls == 1:
-                return DummyResult(scalar_value=2)
-            if self.calls == 2:
+            self.execute_calls += 1
+            if self.execute_calls == 1:
                 return DummyResult(items=[summary])
-            if self.calls == 3:
-                return DummyResult(scalar_value=1)
-            if self.calls == 4:
+            if self.execute_calls == 2:
+                return DummyResult(items=[])
+            if self.execute_calls == 3:
+                return DummyResult(items=[run])
+            if self.execute_calls == 4:
                 return DummyResult(items=[run])
             return DummyResult(rows=[(7, "https://example.com/a"), (9, "https://example.com/b")])
 
-    monkeypatch.setattr(db_engine, "async_session", lambda: DummySession())
+    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
+    monkeypatch.setattr(app_module, "fetch_whatsapp_status", AsyncMock(return_value={"status": "connected", "connected": True}))
 
-    response = client.get("/api/dashboard")
+    response = client.get("/api/dashboard", headers=_get_admin_headers())
     assert response.status_code == 200
 
     payload = response.json()
-    assert payload["pendingSummaries"] == 1
-    assert payload["summaries"][0]["summaryText"] == "Brasil Econômico — Noite\nLinha 1 do corpo\nLinha 2 do corpo"
-    assert payload["summaries"][0]["sourceUrls"] == [
+    assert payload["operation"]["pendingSummaryCount"] == 1
+    assert payload["reading"]["cards"][0]["sourceUrls"] == [
         "https://example.com/a",
         "https://example.com/b",
     ]
-    assert payload["summaries"][0]["sourceCount"] == 2
-    assert payload["recentRuns"][0]["articlesCollected"] == 12
-    assert payload["recentRuns"][0]["summariesGenerated"] == 6
-    assert payload["recentRuns"][0]["messagesSent"] == 2
+    assert payload["reading"]["cards"][0]["sourceCount"] == 2
+    assert payload["operation"]["recentRuns"][0]["articlesCollected"] == 12
+    assert payload["operation"]["recentRuns"][0]["summariesGenerated"] == 6
+    assert payload["operation"]["recentRuns"][0]["messagesSent"] == 2
 
 
 def test_manual_pipeline_trigger():
-    """Test manual pipeline trigger endpoint."""
-    response = client.post("/run-pipeline/morning")
+    response = client.post("/run-pipeline/morning", headers=_get_admin_headers())
     assert response.status_code == 200
     assert response.json()["status"] == "started"
 
 
 def test_manual_pipeline_invalid_period():
-    """Test pipeline trigger with invalid period."""
-    response = client.post("/run-pipeline/invalid")
+    response = client.post("/run-pipeline/invalid", headers=_get_admin_headers())
     assert response.status_code == 400
     assert "error" in response.json()

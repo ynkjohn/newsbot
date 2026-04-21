@@ -1,8 +1,10 @@
+import re
+import unicodedata
+
 import structlog
 
 logger = structlog.get_logger()
 
-# Command definitions: command -> (handler_function_name, description)
 COMMANDS = {
     "!start": ("subscribe", "Inscrever-se nos resumos"),
     "!inscrever": ("subscribe", "Inscrever-se nos resumos"),
@@ -11,8 +13,8 @@ COMMANDS = {
     "!politica": ("category", "politica-brasil"),
     "!economia": ("category", "economia-brasil"),
     "!cripto": ("category", "economia-cripto"),
-    "!mundao": ("category_world", "economia-mundao + politica-mundao"),      # mantido por compatibilidade
-    "!geopolitica": ("category_world", "economia-mundao + politica-mundao"),  # novo nome
+    "!mundao": ("category_world", "economia-mundao + politica-mundao"),
+    "!geopolitica": ("category_world", "economia-mundao + politica-mundao"),
     "!tech": ("category", "tech"),
     "!hoje": ("today", "Todos os resumos do dia"),
     "!help": ("help", "Lista de comandos"),
@@ -20,109 +22,114 @@ COMMANDS = {
 
 
 def parse_message(message: str, is_group: bool = False) -> tuple[str, str | None]:
-    """Parse an incoming WhatsApp message.
-
-    Args:
-        message: The message text
-        is_group: Whether this message is from a group chat
-
-    Returns:
-        (message_type, detail) where message_type is "command", "question", or "other"
-        and detail is the command name or None for questions.
-
-    Rules:
-        - In groups: Only process commands (!) or LLM questions (already filtered by @mention in WhatsApp bridge)
-        - In DMs: Process commands, greetings, and questions normally
-    """
-    text = message.strip().lower()
-
+    text = (message or "").strip().lower()
     if not text:
         return ("other", None)
 
-    # Check if it's a command
     if text.startswith("!"):
         command = text.split()[0]
         if command in COMMANDS:
             return ("command", command)
-        return ("command", "!help")  # Unknown command -> help
+        return ("command", "!help")
 
-    # In groups: only commands are allowed at this point
-    # (LLM questions are already @mentioned in the bridge, so they arrive as normal questions)
-    # Non-command, non-question messages should be ignored
-    if is_group:
-        # If it's not a command and not a valid question, ignore in groups
-        if not _is_valid_question(text):
-            logger.debug(f"Ignoring non-command, non-question group message: {text[:50]}")
-            return ("other", None)
-        # Otherwise fall through to question handling below
-
-    # Check if it's a greeting - respond with help menu (only in DMs)
     if not is_group and _is_greeting(text):
-        return ("command", "!help")  # Treat greeting as help request
+        return ("command", "!help")
 
-    # Ignore spam/random characters (3+ repeated chars, excessive caps, etc)
-    # Check for spam patterns
     if _is_spam(text):
         return ("other", None)
 
-    # It's a question/free text - but only if it looks like a real question
     if _is_valid_question(text):
         return ("question", None)
-    
+
+    if is_group:
+        logger.debug("Ignoring non-actionable group message", preview=text[:50])
     return ("other", None)
 
 
+def _normalized(text: str) -> str:
+    ascii_text = unicodedata.normalize("NFKD", text or "")
+    ascii_text = "".join(char for char in ascii_text if not unicodedata.combining(char))
+    return ascii_text.lower().strip()
+
+
 def _is_greeting(text: str) -> bool:
-    """Detect common Portuguese greetings."""
     greetings = {
-        "oi", "olá", "alo", "e aí", "eai", "eae", "tudo bem", "opa",
-        "oláa", "oiii", "oiiii", "tae", "eae",
-        "hey", "opa, tudo"
+        "oi",
+        "ola",
+        "alo",
+        "e ai",
+        "eai",
+        "eae",
+        "tudo bem",
+        "opa",
+        "hey",
     }
-    
-    # Remove common punctuation
-    clean_text = text.rstrip("?!.,")
-    
-    # Check if it matches a greeting or is very short and greeting-like
+    clean_text = _normalized(text.rstrip("?!.,"))
     return clean_text in greetings
 
 
 def _is_spam(text: str) -> bool:
-    """Detect obvious spam patterns."""
-    # Check for 3+ repeated characters
-    for i in range(len(text) - 2):
-        if text[i] == text[i + 1] == text[i + 2]:
-            return True
-    
-    # Check for very short meaningless text (1-2 chars only)
-    if len(text.split()) <= 1 and len(text) <= 3:
+    if re.search(r"(.)\1\1", text):
         return True
-    
-    return False
+    return len(text.split()) <= 1 and len(text) <= 3
 
 
 def _is_valid_question(text: str) -> bool:
-    """Check if text looks like a real question."""
-    words = text.split()
-    
-    # List of keywords that indicate real questions about news
+    normalized = _normalized(text)
+    words = normalized.split()
+    interrogatives = (
+        "qual",
+        "quais",
+        "quem",
+        "quando",
+        "onde",
+        "por que",
+        "porque",
+        "como",
+        "o que",
+        "oq",
+    )
     news_keywords = {
-        "qual", "quem", "quando", "onde", "por", "porque", "como", "oque",
-        "o que", "explica", "explique", "me explique", "me diz", "me disse",
-        "detalhado", "mais", "contexto", "significa", "quer dizer",
-        "noticia", "noticias", "resumo", "resumos", "ultima", "ultimas",
-        "aconteceu", "acontecendo", "sobre", "assunto", "tema", "politica",
-        "economia", "cripto", "tecnologia", "tech", "brasil", "mundo",
+        "explica",
+        "explique",
+        "me explique",
+        "me diz",
+        "me disse",
+        "detalhado",
+        "contexto",
+        "significa",
+        "quer dizer",
+        "noticia",
+        "noticias",
+        "resumo",
+        "resumos",
+        "ultima",
+        "ultimas",
+        "aconteceu",
+        "acontecendo",
+        "sobre",
+        "assunto",
+        "tema",
+        "politica",
+        "economia",
+        "cripto",
+        "tecnologia",
+        "tech",
+        "brasil",
+        "mundo",
+        "bolsa",
+        "mercado",
+        "selic",
+        "bitcoin",
+        "dolar",
+        "fed",
     }
-    
-    # Indicators
+
     has_question_mark = "?" in text
-    has_news_keyword = any(kw in text for kw in news_keywords)
-    
-    # Very short messages (1-2 words)
+    has_interrogative = any(normalized.startswith(prefix) for prefix in interrogatives)
+    has_news_keyword = any(keyword in normalized for keyword in news_keywords)
+
     if len(words) <= 2:
-        # Only accept if it has a question mark and news keyword (e.g. "Economia?")
         return has_question_mark and has_news_keyword
-    
-    # For 3+ words: accept if it has a question mark OR any news keyword
-    return has_question_mark or has_news_keyword
+
+    return has_question_mark or has_interrogative or has_news_keyword

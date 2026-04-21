@@ -8,8 +8,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from collector.article_extractor import extract_article_content
 from collector.dedup import deduplicate_articles
 from collector.rss_fetcher import compute_content_hash, fetch_all_feeds
+from config.time_utils import local_today, utc_now
 from db.engine import async_session
-from db.models import NewsArticle, PipelineRun, Subscriber, Summary
+from db.models import NewsArticle, PipelineRun, Subscriber
 from delivery.whatsapp_sender import send_digest
 from processor.summarizer import generate_all_summaries
 
@@ -166,7 +167,7 @@ async def _run_pipeline_impl(period: str) -> None:
                 subscribers = list(result.scalars().all())
         except SQLAlchemyError as e:
             logger.error(f"STEP 5 ERROR: Failed to fetch subscribers: {e}")
-            await _update_pipeline_run(run.id, "failed", error_log=f"DB error fetching subscribers")
+            await _update_pipeline_run(run.id, "failed", error_log="DB error fetching subscribers")
             return
 
         if not subscribers:
@@ -218,7 +219,7 @@ async def cleanup_old_articles(days: int = 7) -> None:
     """Remove articles older than the specified number of days."""
     from sqlalchemy import delete as sql_delete
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+    cutoff = utc_now() - datetime.timedelta(days=days)
 
     async with async_session() as session:
         result = await session.execute(
@@ -253,9 +254,9 @@ async def _create_pipeline_run(period: str) -> PipelineRun:
     async with async_session() as session:
         run = PipelineRun(
             period=period,
-            date=datetime.date.today(),
+            date=local_today(),
             status="running",
-            started_at=datetime.datetime.now(datetime.timezone.utc),
+            started_at=utc_now(),
         )
         session.add(run)
         await session.commit()
@@ -293,7 +294,7 @@ async def _finish_pipeline_run(run_id: int) -> None:
     async with async_session() as session:
         run = await session.get(PipelineRun, run_id)
         if run:
-            run.finished_at = datetime.datetime.now(datetime.timezone.utc)
+            run.finished_at = utc_now()
             await session.commit()
 
 

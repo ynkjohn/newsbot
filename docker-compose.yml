@@ -17,6 +17,7 @@ services:
     build: .
     env_file: .env
     environment:
+      ADMIN_AUTH_ENABLED: "false"
       NEWSBOT_USE_ALEMBIC_ONLY: "1"
       WHATSAPP_BRIDGE_TOKEN: ${WHATSAPP_BRIDGE_TOKEN:-newsbot-local-bridge-token}
     ports:

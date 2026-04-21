@@ -1,22 +1,38 @@
 """Test configuration and fixtures."""
 import asyncio
+
 import pytest
 from unittest.mock import AsyncMock
+
+from config.settings import settings
+from config.time_utils import reset_timezone_cache
 
 
 @pytest.fixture(scope="session")
 def event_loop():
-    """Create event loop for async tests."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings(monkeypatch):
+    monkeypatch.setattr(settings, "allowed_numbers", "")
+    monkeypatch.setattr(settings, "whatsapp_bridge_token", "test-bridge-token")
+    monkeypatch.setattr(settings, "whatsapp_bridge_url", "http://whatsapp-bridge:3000")
+    monkeypatch.setattr(settings, "admin_auth_enabled", True)
+    monkeypatch.setattr(settings, "admin_username", "admin")
+    monkeypatch.setattr(settings, "admin_password", "test-admin-password")
+    monkeypatch.setattr(settings, "timezone", "America/Sao_Paulo")
+    monkeypatch.setattr(settings, "pipeline_hours", "7,12,17,21")
+    reset_timezone_cache()
+    yield
+    reset_timezone_cache()
+
+
 @pytest.fixture
 def async_mock():
-    """Create AsyncMock helper."""
     return AsyncMock
 
 
-# Configure pytest-asyncio
-pytest_plugins = ('pytest_asyncio',)
+pytest_plugins = ("pytest_asyncio",)

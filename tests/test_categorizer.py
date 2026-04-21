@@ -1,5 +1,4 @@
 """Tests for processor/categorizer.py"""
-import pytest
 from processor.categorizer import validate_period, validate_category
 from db.models import VALID_CATEGORIES
 

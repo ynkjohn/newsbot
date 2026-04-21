@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     # Admin
     admin_phone: str = ""
+    admin_auth_enabled: bool = True
     admin_username: str = "admin"
     admin_password: str = ""
 

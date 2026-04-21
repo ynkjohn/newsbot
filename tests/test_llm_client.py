@@ -1,9 +1,9 @@
 """Tests for LLM client with retry, timeout, and JSON parsing."""
-import asyncio
 import json
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, call
-from openai import APITimeoutError, RateLimitError, APIConnectionError
+from openai import APIConnectionError, APITimeoutError
 
 from processor.llm_client import LLMClient
 

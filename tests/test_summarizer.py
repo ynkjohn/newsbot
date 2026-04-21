@@ -1,17 +1,15 @@
-"""Tests for summarizer with race condition protection."""
-import pytest
+"""Tests for structured summarizer output."""
 import datetime
-from unittest.mock import MagicMock, AsyncMock, patch
-from sqlalchemy.exc import IntegrityError
-from pydantic import ValidationError
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from processor.summarizer import generate_summaries_for_category, SummaryOutput
-from db.models import NewsArticle, Summary
+import pytest
+
+from db.models import NewsArticle
+from processor.summarizer import SummaryOutput, generate_summaries_for_category
 
 
 @pytest.fixture
 def mock_article():
-    """Create mock article."""
     article = MagicMock(spec=NewsArticle)
     article.id = 1
     article.category = "tech"
@@ -20,38 +18,49 @@ def mock_article():
     article.published_at = datetime.datetime(2026, 4, 18, 12, 0)
     article.source = MagicMock()
     article.source.name = "Test Source"
-    article.processed = False
-    article.summary_id = None
     return article
 
 
 @pytest.fixture
 def mock_summary_output():
-    """Create valid SummaryOutput."""
     return SummaryOutput(
         category="tech",
         period="morning",
-        header="Tech News",
-        bullets=["Point 1", "Point 2", "Point 3"],
-        insight="Key insight",
-        full_summary_text="Full summary text here",
-        source_urls=["https://example.com"]
+        header="🧠 Tecnologia — Manhã",
+        bullets=[
+            "A nova rodada concentrou anúncios de produto e expansão comercial.",
+            "Os players mais relevantes reforçaram diferenciação em IA aplicada.",
+            "O mercado reagiu mais à execução do que ao discurso promocional.",
+        ],
+        insight="O ponto central é que a disputa saiu do piloto e entrou em fase de monetização e escala.",
+        sections=[
+            {
+                "key": "o_que_mudou",
+                "title": "O que mudou",
+                "content": "Os anúncios recentes mostraram avanço simultâneo em produto, distribuição e capacidade operacional.",
+            },
+            {
+                "key": "por_que_importa",
+                "title": "Por que importa",
+                "content": "Isso importa porque o mercado agora compara execução concreta, barreira competitiva e velocidade de adoção.",
+            },
+            {
+                "key": "watchlist",
+                "title": "Watchlist",
+                "content": "O próximo sinal relevante será a conversão dessas apostas em receita, uso recorrente e vantagem defensável.",
+            },
+        ],
     )
 
 
-@pytest.mark.asyncio
-async def test_summary_output_validation(mock_summary_output):
-    """Verify the SummaryOutput Pydantic model structure and validation."""
-    # Verify the SummaryOutput Pydantic model validates correctly
+def test_summary_output_validation(mock_summary_output):
     summary_dict = mock_summary_output.model_dump()
-    
-    # Check all required fields are present
     assert summary_dict["category"] == "tech"
     assert summary_dict["period"] == "morning"
-    assert summary_dict["header"] == "Tech News"
+    assert summary_dict["header"] == "🧠 Tecnologia — Manhã"
     assert len(summary_dict["bullets"]) == 3
-    assert summary_dict["insight"] == "Key insight"
-    assert "example.com" in summary_dict["source_urls"][0]
+    assert summary_dict["insight"].startswith("O ponto central")
+    assert summary_dict["sections"][0]["key"] == "o_que_mudou"
 
 
 @pytest.mark.asyncio
@@ -60,49 +69,45 @@ async def test_summary_output_validation(mock_summary_output):
 async def test_summarizer_marks_articles_processed(
     mock_async_session, mock_get_llm_client, mock_article, mock_summary_output
 ):
-    """Test that articles are marked as processed when a summary is generated."""
-    # Mock LLM client
     mock_llm = AsyncMock()
     mock_llm.chat_json_async.return_value = mock_summary_output.model_dump()
     mock_llm.model_name = "test-model"
     mock_get_llm_client.return_value = mock_llm
-    
-    # Mock session
+
     mock_session = MagicMock()
     mock_session.execute = AsyncMock()
-    mock_session.get = AsyncMock()
     mock_session.flush = AsyncMock()
     mock_session.refresh = AsyncMock()
     mock_session.commit = AsyncMock()
     mock_session.rollback = AsyncMock()
-    mock_session.add = MagicMock()
-    
-    # Result for article loading (first session.execute)
+
+    added_objects = []
+
+    def add_side_effect(obj):
+        obj.id = 321
+        added_objects.append(obj)
+
+    mock_session.add.side_effect = add_side_effect
+
     mock_result_articles = MagicMock()
     mock_result_articles.scalars.return_value.all.return_value = [mock_article]
-    
-    # Result for existing summary check (second session.execute)
+
     mock_result_summary = MagicMock()
     mock_result_summary.scalar_one_or_none.return_value = None
-    
-    # Assign side_effect for multiple calls
-    mock_session.execute.side_effect = [mock_result_articles, mock_result_summary]
-    
-    # Mock session.get for marking as processed
-    mock_session.get.return_value = mock_article
-    
-    # Set up async context manager for session
+
+    mock_update_result = MagicMock()
+
+    mock_session.execute.side_effect = [mock_result_articles, mock_result_summary, mock_update_result]
     mock_async_session.return_value.__aenter__.return_value = mock_session
     mock_async_session.return_value.__aexit__ = AsyncMock()
-    
-    # Call the function
+
     result = await generate_summaries_for_category([mock_article], "morning")
-    
-    # Verify the results
+
     assert result is not None
-    assert mock_article.processed is True
-    assert mock_article.summary_id == result.id
-    
-    # Verify DB actions
+    assert result.id == 321
+    assert result.model_used == "test-model"
+    assert result.key_takeaways["version"] == 2
+    assert result.key_takeaways["sections"][0]["key"] == "o_que_mudou"
+    assert "Insight-chave" in result.summary_text
     assert mock_session.commit.called
     assert mock_session.add.called
