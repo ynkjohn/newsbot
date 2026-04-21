@@ -103,25 +103,26 @@ def _is_spam(text: str) -> bool:
 
 def _is_valid_question(text: str) -> bool:
     """Check if text looks like a real question."""
-    # Must have at least 3 words or contain news-related keywords
     words = text.split()
-    
-    # Very short messages (1-2 words) usually aren't real questions
-    if len(words) <= 2:
-        return False
     
     # List of keywords that indicate real questions about news
     news_keywords = {
         "qual", "quem", "quando", "onde", "por", "porque", "como", "oque",
-        "o que", "explica", "explique", "me explique", "me diz", "me disses",
+        "o que", "explica", "explique", "me explique", "me diz", "me disse",
         "detalhado", "mais", "contexto", "significa", "quer dizer",
         "noticia", "noticias", "resumo", "resumos", "ultima", "ultimas",
         "aconteceu", "acontecendo", "sobre", "assunto", "tema", "politica",
         "economia", "cripto", "tecnologia", "tech", "brasil", "mundo",
     }
     
-    # For 3+ words, always accept as question
-    if len(words) >= 3:
-        return True
+    # Indicators
+    has_question_mark = "?" in text
+    has_news_keyword = any(kw in text for kw in news_keywords)
     
-    return False
+    # Very short messages (1-2 words)
+    if len(words) <= 2:
+        # Only accept if it has a question mark and news keyword (e.g. "Economia?")
+        return has_question_mark and has_news_keyword
+    
+    # For 3+ words: accept if it has a question mark OR any news keyword
+    return has_question_mark or has_news_keyword

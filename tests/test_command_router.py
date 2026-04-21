@@ -37,7 +37,27 @@ def test_parse_group_command_without_question():
 
 @pytest.mark.parametrize(
     "text",
-    ["Qual o impacto das eleicoes na bolsa?"],
+    [
+        "Qual o impacto das eleicoes na bolsa?",
+        "me disse o que aconteceu hoje",
+        "noticia sobre cripto",
+        "O que aconteceu hoje?",
+        "Economia?",
+    ],
 )
 def test_parse_group_question(text):
     assert parse_message(text, is_group=True) == ("question", None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "vamos jogar bola",
+        "futebol hoje à tarde",
+        "oi tudo bem",
+        "tudo bem?",
+        "ok entendi",
+    ],
+)
+def test_parse_group_other(text):
+    assert parse_message(text, is_group=True) == ("other", None)

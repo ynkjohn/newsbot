@@ -168,15 +168,20 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
     import db.engine as db_engine
 
     summary = MagicMock()
+    summary.id = 1
     summary.category = "tech"
     summary.period = "morning"
     summary.key_takeaways = ["Point 1", "Point 2"]
+    summary.summary_text = "Resumo Tech\nLinha complementar"
+    summary.source_article_ids = []
+    summary.date = datetime.now(timezone.utc).date()
     summary.created_at = datetime.now(timezone.utc)
 
     class DummyResult:
-        def __init__(self, scalar_value=None, items=None):
+        def __init__(self, scalar_value=None, items=None, rows=None):
             self._scalar_value = scalar_value
             self._items = items or []
+            self._rows = rows or []
 
         def scalar(self):
             return self._scalar_value
@@ -185,7 +190,7 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
             return self
 
         def all(self):
-            return self._items
+            return self._rows or self._items
 
     class DummySession:
         def __init__(self):
@@ -201,7 +206,11 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
             self.calls += 1
             if self.calls == 1:
                 return DummyResult(scalar_value=1)
-            return DummyResult(items=[summary])
+            if self.calls == 2:
+                return DummyResult(items=[summary])
+            if self.calls == 3:
+                return DummyResult(scalar_value=0)
+            return DummyResult(items=[])
 
     monkeypatch.setattr(db_engine, "async_session", lambda: DummySession())
 
@@ -210,6 +219,91 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
     payload = response.json()
     assert payload["summaries"][0]["bullets"] == ["Point 1", "Point 2"]
     assert payload["summaries"][0]["insight"] == ""
+    assert payload["summaries"][0]["summaryText"] == "Resumo Tech\nLinha complementar"
+    assert payload["summaries"][0]["sourceUrls"] == []
+    assert payload["summaries"][0]["sourceCount"] == 0
+    assert payload["recentRuns"] == []
+
+
+def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
+    """Dashboard should expose full summary text, ordered sources, and recent pipeline runs."""
+    from datetime import date, datetime, timezone
+    from unittest.mock import MagicMock
+    import db.engine as db_engine
+
+    summary = MagicMock()
+    summary.id = 99
+    summary.category = "economia-brasil"
+    summary.period = "evening"
+    summary.key_takeaways = {"bullets": ["Primeiro ponto"], "insight": "Insight principal"}
+    summary.summary_text = "Brasil Econômico — Noite\nLinha 1 do corpo\nLinha 2 do corpo"
+    summary.source_article_ids = [7, 9, 7]
+    summary.date = date(2026, 4, 21)
+    summary.created_at = datetime(2026, 4, 21, 1, 8, tzinfo=timezone.utc)
+
+    run = MagicMock()
+    run.id = 10
+    run.period = "evening"
+    run.status = "completed"
+    run.articles_collected = 12
+    run.summaries_generated = 6
+    run.messages_sent = 2
+    run.started_at = datetime(2026, 4, 21, 1, 0, tzinfo=timezone.utc)
+    run.finished_at = datetime(2026, 4, 21, 1, 3, tzinfo=timezone.utc)
+
+    class DummyResult:
+        def __init__(self, scalar_value=None, items=None, rows=None):
+            self._scalar_value = scalar_value
+            self._items = items or []
+            self._rows = rows or []
+
+        def scalar(self):
+            return self._scalar_value
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows or self._items
+
+    class DummySession:
+        def __init__(self):
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            self.calls += 1
+            if self.calls == 1:
+                return DummyResult(scalar_value=2)
+            if self.calls == 2:
+                return DummyResult(items=[summary])
+            if self.calls == 3:
+                return DummyResult(scalar_value=1)
+            if self.calls == 4:
+                return DummyResult(items=[run])
+            return DummyResult(rows=[(7, "https://example.com/a"), (9, "https://example.com/b")])
+
+    monkeypatch.setattr(db_engine, "async_session", lambda: DummySession())
+
+    response = client.get("/api/dashboard")
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["pendingSummaries"] == 1
+    assert payload["summaries"][0]["summaryText"] == "Brasil Econômico — Noite\nLinha 1 do corpo\nLinha 2 do corpo"
+    assert payload["summaries"][0]["sourceUrls"] == [
+        "https://example.com/a",
+        "https://example.com/b",
+    ]
+    assert payload["summaries"][0]["sourceCount"] == 2
+    assert payload["recentRuns"][0]["articlesCollected"] == 12
+    assert payload["recentRuns"][0]["summariesGenerated"] == 6
+    assert payload["recentRuns"][0]["messagesSent"] == 2
 
 
 def test_manual_pipeline_trigger():

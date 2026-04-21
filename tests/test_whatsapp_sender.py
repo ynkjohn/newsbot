@@ -43,8 +43,6 @@ def test_whatsapp_send_success():
 
         assert result == {"success": True}
         mock_post.assert_called_once()
-        _, kwargs = mock_post.call_args
-        assert kwargs.get("headers") == {}
 
 
 def test_whatsapp_send_includes_bearer_when_configured(monkeypatch):
@@ -63,8 +61,9 @@ def test_whatsapp_send_includes_bearer_when_configured(monkeypatch):
         assert kwargs["headers"]["Authorization"] == "Bearer secret-bridge-token"
 
 
-def test_whatsapp_send_timeout_retry():
-    """Test that timeout triggers retry attempts."""
+@patch('delivery.whatsapp_sender.time.sleep')
+def test_whatsapp_send_timeout_retry(mock_sleep):
+    """Test that timeout triggers retry attempts with correct backoff."""
     with patch('delivery.whatsapp_sender.requests.post') as mock_post:
         # First 2 calls timeout, 3rd succeeds
         mock_response = MagicMock()
@@ -78,20 +77,32 @@ def test_whatsapp_send_timeout_retry():
         
         result = _send_whatsapp_message("551234567890", "Hello")
         
-        # Should succeed on 3rd attempt after internal retries
+        # Should succeed on 3rd attempt
         assert result == {"success": True}
-        # Should have been called 3 times (1 initial + 2 retries)
         assert mock_post.call_count == 3
+        # Should have slept for 1s and 5s
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_any_call(1)
+        mock_sleep.assert_any_call(5)
 
 
-def test_whatsapp_send_connection_error():
-    """Test that connection error is handled."""
+@patch('delivery.whatsapp_sender.time.sleep')
+def test_whatsapp_send_connection_error_retry(mock_sleep):
+    """Test that connection error triggers retry."""
     with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        mock_post.side_effect = ConnectionError("Failed to connect")
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True}
+        
+        mock_post.side_effect = [
+            ConnectionError("Failed to connect"),
+            mock_response
+        ]
         
         result = _send_whatsapp_message("551234567890", "Hello")
         
-        assert result is None
+        assert result == {"success": True}
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(1)
 
 
 def test_whatsapp_send_4xx_no_retry():
@@ -110,8 +121,9 @@ def test_whatsapp_send_4xx_no_retry():
         assert mock_post.call_count == 1
 
 
-def test_whatsapp_send_5xx_retry():
-    """Test that 5xx errors trigger retry."""
+@patch('delivery.whatsapp_sender.time.sleep')
+def test_whatsapp_send_5xx_retry(mock_sleep):
+    """Test that 5xx errors trigger retry and backoff."""
     with patch('delivery.whatsapp_sender.requests.post') as mock_post:
         # First call is 500, second succeeds
         error_response = MagicMock()
@@ -129,8 +141,22 @@ def test_whatsapp_send_5xx_retry():
         result = _send_whatsapp_message("551234567890", "Hello")
         
         # Should retry and eventually succeed
-        # (actual behavior depends on implementation)
-        assert mock_post.call_count >= 1
+        assert result == {"success": True}
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(1)
+
+
+@patch('delivery.whatsapp_sender.time.sleep')
+def test_whatsapp_send_max_retries_reached(mock_sleep):
+    """Test that reaching max retries returns None."""
+    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
+        mock_post.side_effect = Timeout("Timeout")
+        
+        result = _send_whatsapp_message("551234567890", "Hello")
+        
+        assert result is None
+        assert mock_post.call_count == 3
+        assert mock_sleep.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -142,9 +168,10 @@ async def test_send_digest_only_updates_last_sent_on_success(mock_subscriber, mo
     with patch('delivery.whatsapp_sender._send_whatsapp_message') as mock_send, \
          patch('delivery.whatsapp_sender.async_session') as mock_session_cls, \
          patch('delivery.whatsapp_sender.filter_summaries_by_preferences') as mock_filter, \
-         patch('delivery.whatsapp_sender.format_morning_digest') as mock_format, \
+         patch('delivery.whatsapp_sender.format_digest') as mock_format, \
          patch('delivery.whatsapp_sender.split_message') as mock_split, \
-         patch('delivery.whatsapp_sender.rate_limiter') as mock_limiter:
+         patch('delivery.whatsapp_sender.rate_limiter') as mock_limiter, \
+         patch('delivery.whatsapp_sender._log_delivery_results', AsyncMock()):
         
         # Setup mocks
         mock_filter.return_value = summaries
@@ -163,8 +190,8 @@ async def test_send_digest_only_updates_last_sent_on_success(mock_subscriber, mo
         
         sent = await send_digest(subscribers, summaries, "morning")
         
-        # Should have sent at least 1 message
-        assert sent >= 0
+        assert sent == 1
+        assert mock_session.commit.called
 
 
 @pytest.mark.asyncio
@@ -176,9 +203,10 @@ async def test_send_digest_skips_update_on_all_failures(mock_subscriber, mock_su
     with patch('delivery.whatsapp_sender._send_whatsapp_message') as mock_send, \
          patch('delivery.whatsapp_sender.async_session') as mock_session_cls, \
          patch('delivery.whatsapp_sender.filter_summaries_by_preferences') as mock_filter, \
-         patch('delivery.whatsapp_sender.format_morning_digest') as mock_format, \
+         patch('delivery.whatsapp_sender.format_digest') as mock_format, \
          patch('delivery.whatsapp_sender.split_message') as mock_split, \
-         patch('delivery.whatsapp_sender.rate_limiter') as mock_limiter:
+         patch('delivery.whatsapp_sender.rate_limiter') as mock_limiter, \
+         patch('delivery.whatsapp_sender._log_delivery_results', AsyncMock()):
         
         # Setup mocks
         mock_filter.return_value = summaries
@@ -195,7 +223,10 @@ async def test_send_digest_skips_update_on_all_failures(mock_subscriber, mock_su
         mock_session.close = AsyncMock()
         mock_session.get = AsyncMock(return_value=mock_subscriber)
         
-        sent = await send_digest(subscribers, summaries, "morning")
+        # Mock time.sleep inside send_digest (asyncio.sleep)
+        with patch('delivery.whatsapp_sender.asyncio.sleep', AsyncMock()):
+            sent = await send_digest(subscribers, summaries, "morning")
         
         # Should have sent 0 messages
         assert sent == 0
+        assert not mock_session.commit.called

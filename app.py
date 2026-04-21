@@ -202,7 +202,52 @@ async def dashboard():
     """API endpoint for dashboard data."""
     from sqlalchemy import select, func
     from db.engine import async_session
-    from db.models import Summary, Subscriber
+    from db.models import NewsArticle, PipelineRun, Summary, Subscriber
+
+    def _normalize_source_ids(raw_ids) -> list[int]:
+        if not isinstance(raw_ids, list):
+            return []
+        return [article_id for article_id in raw_ids if isinstance(article_id, int)]
+
+    def _extract_bullets(raw_takeaways) -> list[str]:
+        if isinstance(raw_takeaways, dict):
+            bullets = raw_takeaways.get("bullets", [])
+            return [str(item) for item in bullets if item]
+        if isinstance(raw_takeaways, list):
+            return [str(item) for item in raw_takeaways if item]
+        return []
+
+    def _extract_insight(raw_takeaways) -> str:
+        if isinstance(raw_takeaways, dict):
+            return str(raw_takeaways.get("insight", "") or "")
+        return ""
+
+    def _ordered_source_urls(source_ids: list[int], source_url_map: dict[int, str]) -> list[str]:
+        ordered_urls: list[str] = []
+        seen_urls: set[str] = set()
+        for article_id in source_ids:
+            url = source_url_map.get(article_id)
+            if url and url not in seen_urls:
+                ordered_urls.append(url)
+                seen_urls.add(url)
+        return ordered_urls
+
+    def _serialize_summary(summary: Summary) -> dict:
+        source_ids = _normalize_source_ids(getattr(summary, "source_article_ids", []))
+        source_urls = _ordered_source_urls(source_ids, source_url_map)
+        return {
+            "id": summary.id,
+            "header": summary.summary_text.split('\n')[0] if summary.summary_text else f"Resumo {summary.category}",
+            "category": summary.category,
+            "period": summary.period,
+            "date": summary.date.isoformat() if summary.date else None,
+            "bullets": _extract_bullets(summary.key_takeaways),
+            "insight": _extract_insight(summary.key_takeaways),
+            "summaryText": summary.summary_text or "",
+            "sourceUrls": source_urls,
+            "sourceCount": len(source_urls),
+            "created_at": summary.created_at.isoformat() if summary.created_at else None,
+        }
     
     async with async_session() as session:
         # Count active subscribers only
@@ -211,11 +256,11 @@ async def dashboard():
         )
         subscriber_count = sub_result.scalar() or 0
         
-        # Get today's summaries
+        # Get today's summaries by logical summary date, not creation timestamp
         today = datetime.now(timezone.utc).date()
         summaries_result = await session.execute(
             select(Summary)
-            .where(Summary.created_at >= today)
+            .where(Summary.date == today)
             .order_by(Summary.created_at.desc())
         )
         summaries = summaries_result.scalars().all()
@@ -226,23 +271,51 @@ async def dashboard():
             )
         )
         pending_summaries = pending_result.scalar() or 0
+
+        recent_runs_result = await session.execute(
+            select(PipelineRun)
+            .order_by(PipelineRun.started_at.desc())
+            .limit(6)
+        )
+        recent_runs = recent_runs_result.scalars().all()
+
+        unique_source_ids: list[int] = []
+        for summary in summaries:
+            for article_id in _normalize_source_ids(getattr(summary, "source_article_ids", [])):
+                if article_id not in unique_source_ids:
+                    unique_source_ids.append(article_id)
+
+        source_url_map: dict[int, str] = {}
+        if unique_source_ids:
+            source_rows_result = await session.execute(
+                select(NewsArticle.id, NewsArticle.url).where(NewsArticle.id.in_(unique_source_ids))
+            )
+            source_url_map = {
+                article_id: url
+                for article_id, url in source_rows_result.all()
+            }
         
         return {
             "subscribers": subscriber_count,
             "todaySummaries": len(summaries),
             "nextSend": settings.pipeline_schedule_display,
+            "pipelineHours": settings.pipeline_hours_list,
+            "timezone": settings.timezone,
             "pendingSummaries": pending_summaries,
-            "summaries": [
+            "recentRuns": [
                 {
-                    "header": f"Resumo {s.category} - {s.period}",
-                    "category": s.category,
-                    "period": s.period,
-                    "bullets": s.key_takeaways.get("bullets", []) if isinstance(s.key_takeaways, dict) else (s.key_takeaways if isinstance(s.key_takeaways, list) else []),
-                    "insight": s.key_takeaways.get("insight", "") if isinstance(s.key_takeaways, dict) else "",
-                    "created_at": s.created_at.isoformat() if s.created_at else None
+                    "id": run.id,
+                    "period": run.period,
+                    "status": run.status,
+                    "articlesCollected": run.articles_collected,
+                    "summariesGenerated": run.summaries_generated,
+                    "messagesSent": run.messages_sent,
+                    "startedAt": run.started_at.isoformat() if run.started_at else None,
+                    "finishedAt": run.finished_at.isoformat() if run.finished_at else None,
                 }
-                for s in summaries
-            ]
+                for run in recent_runs
+            ],
+            "summaries": [_serialize_summary(summary) for summary in summaries]
         }
 
 
