@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dev dependencies
+        run: pip install ".[dev]"
+
+      - name: Pytest
+        run: pytest -q
+
+      - name: Alembic migrations apply (sync SQLite temp)
+        run: |
+          mkdir -p /tmp/newsbot_ci
+          python -m alembic -c alembic.ini -x "sqlalchemy.url=sqlite:////tmp/newsbot_ci/test.db" upgrade head

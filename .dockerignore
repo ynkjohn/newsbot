@@ -1,0 +1,11 @@
+.git
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+data
+meridiano-main
+whatsapp-bridge/node_modules
