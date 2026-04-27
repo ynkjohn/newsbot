@@ -28,9 +28,7 @@ def parse_message(message: str, is_group: bool = False) -> tuple[str, str | None
 
     if text.startswith("!"):
         command = text.split()[0]
-        if command in COMMANDS:
-            return ("command", command)
-        return ("command", "!help")
+        return ("command", command)
 
     if not is_group and _is_greeting(text):
         return ("command", "!help")

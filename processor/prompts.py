@@ -14,6 +14,8 @@ Regras obrigatórias:
 - Os bullets devem ser curtos, informativos e não redundantes.
 - O insight deve destacar o efeito mais importante da rodada.
 - As seções devem aprofundar a leitura sem repetir os bullets.
+- Inclua items estruturados para as principais notícias/eventos, preservando command_hint curto e específico para consulta no WhatsApp.
+- command_hint deve começar com !, ter no máximo 50 caracteres, não conter espaços e não usar comandos genéricos por posição como !1 ou !2.
 - Use nomes concretos, datas e números quando existirem no material.
 
 Categorias válidas:
@@ -57,6 +59,24 @@ Formato exato do JSON:
       "title": "Watchlist",
       "content": "<parágrafo curto com o que monitorar a seguir>"
     }
+  ],
+  "items": [
+    {
+      "event_key": "<slug curto e estável do evento>",
+      "title": "<manchete curta da notícia>",
+      "why_it_matters": "<por que isso importa>",
+      "what_happened": "<o que aconteceu>",
+      "watchlist": "<o que acompanhar>",
+      "source_indexes": [1],
+      "source_article_ids": [],
+      "importance": "high|medium|low",
+      "importance_score": 1,
+      "novelty": "new|update|followup",
+      "sentiment": "positive|neutral|negative|mixed",
+      "material_change": true,
+      "trust_status": "trusted|developing|disputed",
+      "command_hint": "!assunto"
+    }
   ]
 }"""
 
@@ -79,10 +99,12 @@ CORRECTION_PROMPT = """O JSON anterior ficou inválido ou incompleto.
 
 Corrija e reenviar obedecendo estas regras:
 - Retorne somente JSON.
-- Não adicione campos extras.
-- Mantenha os campos obrigatórios: category, period, header, bullets, insight, sections.
+- Não adicione campos extras fora do schema solicitado.
+- Mantenha os campos obrigatórios: category, period, header, bullets, insight, sections, items.
 - bullets deve ser uma lista de strings.
 - sections deve ser uma lista de objetos com key, title e content.
+- items deve ser uma lista de objetos com event_key, title, why_it_matters, what_happened, watchlist, source_indexes, source_article_ids, importance, importance_score, novelty, sentiment, material_change, trust_status e command_hint.
+- command_hint deve começar com !, ser curto, específico e sem espaços.
 - Não inclua URLs."""
 
 RAG_SYSTEM_PROMPT = """Você responde perguntas sobre notícias recentes para um usuário de WhatsApp.

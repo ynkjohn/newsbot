@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import delivery.whatsapp_sender as whatsapp_sender
+import interactions.command_handlers as command_handlers
+import interactions.command_router as command_router
 import interactions.question_handler as question_handler
 import interactions.subscriber_manager as subscriber_manager
 import interactions.webhook_handler as webhook_handler
@@ -25,6 +27,163 @@ async def _create_sessionmaker(db_path: Path) -> tuple:
 class _DummyLimiter:
     async def acquire(self) -> None:
         return None
+
+
+def test_parse_message_preserves_unknown_news_command():
+    assert command_router.parse_message("!pis") == ("command", "!pis")
+
+
+def test_help_text_explains_headline_drilldown_commands():
+    response = command_handlers.HELP_TEXT
+
+    assert "manchetes curtas por editoria" in response
+    assert "comando que aparece no fim da manchete" in response
+    assert "!pis" in response
+    assert "!start" in response
+
+
+@pytest.mark.asyncio
+async def test_unknown_news_command_resolves_to_drilldown(monkeypatch):
+    called_with: list[str] = []
+
+    async def fake_build_drilldown_response_for_command(command: str) -> str | None:
+        called_with.append(command)
+        return "Detalhes sobre PIS"
+
+    monkeypatch.setattr(
+        command_handlers,
+        "build_drilldown_response_for_command",
+        fake_build_drilldown_response_for_command,
+    )
+
+    response = await command_handlers.handle_command("!pis", "5511999999999")
+
+    assert response == "Detalhes sobre PIS"
+    assert called_with == ["!pis"]
+
+
+@pytest.mark.asyncio
+async def test_build_drilldown_response_for_command_reads_summary_items(tmp_path, monkeypatch):
+    import interactions.drilldown_handler as drilldown_handler
+
+    engine, sessionmaker = await _create_sessionmaker(tmp_path / "drilldown.db")
+    monkeypatch.setattr(drilldown_handler, "async_session", sessionmaker)
+
+    async with sessionmaker() as session:
+        summary = Summary(
+            category="economia-brasil",
+            period="morning",
+            date=datetime.date.today(),
+            summary_text="Resumo",
+            key_takeaways={
+                "items": [
+                    {
+                        "title": "PIS/Pasep tem novo calendário",
+                        "what_happened": "O governo detalhou as datas de pagamento.",
+                        "why_it_matters": "A medida afeta trabalhadores que aguardam o benefício.",
+                        "watchlist": "Acompanhar o calendário da Caixa.",
+                        "command_hint": "!pis",
+                    }
+                ]
+            },
+            source_article_ids=[1],
+            model_used="model",
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        session.add(summary)
+        await session.commit()
+
+    response = await drilldown_handler.build_drilldown_response_for_command("!PIS agora")
+
+    assert response is not None
+    assert "PIS/Pasep tem novo calendário" in response
+    assert "O governo detalhou as datas de pagamento." in response
+    assert "A medida afeta trabalhadores que aguardam o benefício." in response
+    assert "Acompanhar o calendário da Caixa." in response
+    assert "O próximo ponto a observar" in response
+    assert "O que aconteceu" not in response
+    assert "Por que importa" not in response
+    assert "Fique de olho" not in response
+    assert "Para acompanhar" not in response
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_build_drilldown_response_ignores_ambiguous_command_hint(tmp_path, monkeypatch):
+    import interactions.drilldown_handler as drilldown_handler
+
+    engine, sessionmaker = await _create_sessionmaker(tmp_path / "drilldown_ambiguous.db")
+    monkeypatch.setattr(drilldown_handler, "async_session", sessionmaker)
+
+    async with sessionmaker() as session:
+        first_summary = Summary(
+            category="economia-brasil",
+            period="morning",
+            date=datetime.date.today(),
+            summary_text="Resumo 1",
+            key_takeaways={
+                "items": [
+                    {
+                        "title": "PIS/Pasep tem novo calendário",
+                        "what_happened": "O governo detalhou as datas de pagamento.",
+                        "why_it_matters": "A medida afeta trabalhadores que aguardam o benefício.",
+                        "watchlist": "Acompanhar o calendário da Caixa.",
+                        "command_hint": "!pis",
+                    }
+                ]
+            },
+            source_article_ids=[1],
+            model_used="model",
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        second_summary = Summary(
+            category="economia-brasil",
+            period="evening",
+            date=datetime.date.today(),
+            summary_text="Resumo 2",
+            key_takeaways={
+                "items": [
+                    {
+                        "title": "PIS/Pasep abre consulta diferente",
+                        "what_happened": "Outro informe usou o mesmo comando curto.",
+                        "why_it_matters": "Responder qualquer um dos dois confundiria o usuário.",
+                        "watchlist": "Aguardar um comando mais específico.",
+                        "command_hint": "!pis",
+                    }
+                ]
+            },
+            source_article_ids=[2],
+            model_used="model",
+            created_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1),
+        )
+        session.add_all([first_summary, second_summary])
+        await session.commit()
+
+    response = await drilldown_handler.build_drilldown_response_for_command("!pis")
+
+    assert response is None
+
+    await engine.dispose()
+
+
+
+def test_render_item_drilldown_preserves_watchlist_acronym():
+    from interactions.drilldown_handler import _render_item_drilldown
+
+    response = _render_item_drilldown(
+        {
+            "title": "Inflação no radar",
+            "what_happened": "Dados prévios apontam pressão de preços.",
+            "why_it_matters": "A leitura pode afetar juros.",
+            "watchlist": "IPCA de março e comunicação do Banco Central.",
+        }
+    )
+
+    assert response is not None
+    assert "IPCA de março" in response
+    assert "iPCA" not in response
+
 
 
 def test_normalize_group_question_removes_numeric_mentions():

@@ -3,6 +3,7 @@ from sqlalchemy import select
 from config.time_utils import local_today
 from db.engine import async_session
 from db.models import Summary
+from interactions.drilldown_handler import build_drilldown_response_for_command
 from interactions.messages import category_summary_label, help_text, no_summary_available
 from interactions.subscriber_manager import subscribe, unsubscribe
 
@@ -12,7 +13,13 @@ HELP_TEXT = help_text()
 async def handle_command(command: str, phone_number: str) -> str:
     from interactions.command_router import COMMANDS
 
-    handler_type, detail = COMMANDS.get(command, ("help", "Lista de comandos"))
+    handler_type, detail = COMMANDS.get(command, (None, None))
+
+    if handler_type is None:
+        drilldown_response = await build_drilldown_response_for_command(command)
+        if drilldown_response:
+            return drilldown_response
+        return HELP_TEXT
 
     if handler_type == "subscribe":
         return await subscribe(phone_number)

@@ -47,6 +47,55 @@ class SummarySection(BaseModel):
         return title or fallback
 
 
+class DigestItemOutput(BaseModel):
+    event_key: str
+    title: str
+    why_it_matters: str = Field(min_length=20, max_length=1200)
+    what_happened: str = Field(min_length=20, max_length=1200)
+    watchlist: str = Field(default="", max_length=1200)
+    source_indexes: list[int] = Field(default_factory=list)
+    source_article_ids: list[int] = Field(default_factory=list)
+    importance: str = "medium"
+    importance_score: int = Field(default=3, ge=1, le=5)
+    novelty: str = "update"
+    sentiment: str = "neutral"
+    material_change: bool = False
+    trust_status: str = "trusted"
+    command_hint: str
+
+    @field_validator("event_key", "title")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            raise ValueError("required item text is empty")
+        return text
+
+    @field_validator("why_it_matters", "what_happened", "watchlist")
+    @classmethod
+    def normalize_long_text(cls, value: str) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @field_validator("importance", "novelty", "sentiment", "trust_status")
+    @classmethod
+    def normalize_label(cls, value: str) -> str:
+        return " ".join(str(value or "").split()).strip().lower()
+
+    @field_validator("command_hint")
+    @classmethod
+    def validate_command_hint(cls, value: str) -> str:
+        command = " ".join(str(value or "").split()).strip().lower()
+        if (
+            not command.startswith("!")
+            or " " in command
+            or len(command) < 2
+            or len(command) > 50
+            or command[1:].isdigit()
+        ):
+            raise ValueError("invalid command_hint")
+        return command
+
+
 class SummaryOutput(BaseModel):
     category: str
     period: str
@@ -54,6 +103,7 @@ class SummaryOutput(BaseModel):
     bullets: list[str] = Field(min_length=3, max_length=5)
     insight: str = Field(min_length=30, max_length=600)
     sections: list[SummarySection] = Field(min_length=2, max_length=4)
+    items: list[DigestItemOutput] = Field(default_factory=list)
 
     @field_validator("category")
     @classmethod
@@ -155,6 +205,7 @@ async def generate_summaries_for_category(
         bullets=validated.bullets,
         insight=validated.insight,
         sections=[section.model_dump() for section in validated.sections],
+        items=[item.model_dump() for item in validated.items],
     )
     summary_text = render_summary_text(validated.category, validated.period, takeaways)
 

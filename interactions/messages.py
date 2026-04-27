@@ -8,12 +8,14 @@ from processor.summary_format import PERIOD_GREETINGS, display_category, display
 def help_text() -> str:
     return "\n".join(
         [
-            "Posso te ajudar de dois jeitos:",
+            "NewsBot envia manchetes curtas por editoria.",
             "",
-            "• Comandos rápidos: !politica !economia !cripto !geopolitica !tech !hoje",
-            "• Perguntas livres sobre as notícias mais recentes do dia",
+            "• Use !hoje para ver o boletim do dia",
+            "• Use !politica, !economia, !cripto, !geopolitica ou !tech para uma editoria",
+            "• Para aprofundar uma notícia, mande o comando que aparece no fim da manchete, como !pis ou !gaza",
+            "• Também respondo perguntas livres sobre as notícias recentes",
             "",
-            "Também funcionam:",
+            "Assinatura:",
             "• !start ou !inscrever para ativar os resumos",
             "• !stop ou !sair para pausar o envio",
         ]
@@ -68,7 +70,7 @@ def digest_intro(period: str, date: datetime.date) -> str:
 
 
 def digest_footer() -> str:
-    return "Comandos: !politica !economia !cripto !geopolitica !tech !hoje"
+    return "Para aprofundar, mande o comando da manchete. Editorias: !politica !economia !cripto !geopolitica !tech"
 
 
 def natural_question_fallback() -> str:
