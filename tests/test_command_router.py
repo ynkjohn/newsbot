@@ -15,8 +15,8 @@ def test_parse_known_commands():
     assert parse_message("!START") == ("command", "!start")
 
 
-def test_parse_unknown_command_maps_to_help():
-    assert parse_message("!unknown") == ("command", "!help")
+def test_parse_unknown_command_is_preserved():
+    assert parse_message("!unknown") == ("command", "!unknown")
 
 
 def test_parse_question_dm():

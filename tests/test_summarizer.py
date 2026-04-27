@@ -50,6 +50,23 @@ def mock_summary_output():
                 "content": "O próximo sinal relevante será a conversão dessas apostas em receita, uso recorrente e vantagem defensável.",
             },
         ],
+        items=[
+            {
+                "event_key": "ia-monetizacao",
+                "title": "Empresas aceleram monetização de IA",
+                "why_it_matters": "A disputa passa a depender de receita recorrente e vantagem defensável, não apenas de anúncios de produto.",
+                "what_happened": "A rodada trouxe anúncios de produto e expansão comercial em IA aplicada.",
+                "watchlist": "Acompanhar conversão em receita, uso recorrente e barreiras competitivas.",
+                "source_article_ids": [1],
+                "importance": "high",
+                "importance_score": 5,
+                "novelty": "new",
+                "sentiment": "neutral",
+                "material_change": True,
+                "trust_status": "trusted",
+                "command_hint": "!ia",
+            }
+        ],
     )
 
 
@@ -61,6 +78,59 @@ def test_summary_output_validation(mock_summary_output):
     assert len(summary_dict["bullets"]) == 3
     assert summary_dict["insight"].startswith("O ponto central")
     assert summary_dict["sections"][0]["key"] == "o_que_mudou"
+
+
+def test_summary_output_preserves_short_command_hint():
+    parsed = SummaryOutput(
+        category="tech",
+        period="morning",
+        header="🧠 Tecnologia — Manhã",
+        bullets=[
+            "A nova rodada concentrou anúncios relevantes de produto.",
+            "Os players reforçaram diferenciação em IA aplicada.",
+            "O mercado reagiu mais à execução do que ao discurso.",
+        ],
+        insight="A principal implicação é que a disputa em IA entrou em fase de monetização concreta.",
+        sections=[
+            {
+                "key": "o_que_mudou",
+                "title": "O que mudou",
+                "content": "Os anúncios recentes mostraram avanço simultâneo em produto, distribuição e capacidade operacional.",
+            },
+            {
+                "key": "por_que_importa",
+                "title": "Por que importa",
+                "content": "Isso importa porque o mercado agora compara execução concreta, barreira competitiva e velocidade de adoção.",
+            },
+        ],
+        items=[
+            {
+                "event_key": "ia-monetizacao",
+                "title": "Empresas aceleram monetização de IA",
+                "why_it_matters": "A disputa passa a depender de receita recorrente e vantagem defensável.",
+                "what_happened": "A rodada trouxe anúncios de produto e expansão comercial em IA aplicada.",
+                "watchlist": "Acompanhar conversão em receita e uso recorrente.",
+                "source_article_ids": [1],
+                "importance": "high",
+                "importance_score": 5,
+                "novelty": "new",
+                "sentiment": "neutral",
+                "material_change": True,
+                "trust_status": "trusted",
+                "command_hint": "!ia",
+            }
+        ],
+    )
+
+    assert parsed.items[0].command_hint == "!ia"
+
+
+def test_summary_output_rejects_numeric_position_command_hint(mock_summary_output):
+    payload = mock_summary_output.model_dump()
+    payload["items"][0]["command_hint"] = "!1"
+
+    with pytest.raises(ValueError):
+        SummaryOutput(**payload)
 
 
 @pytest.mark.asyncio
@@ -106,8 +176,9 @@ async def test_summarizer_marks_articles_processed(
     assert result is not None
     assert result.id == 321
     assert result.model_used == "test-model"
-    assert result.key_takeaways["version"] == 2
+    assert result.key_takeaways["version"] == 3
     assert result.key_takeaways["sections"][0]["key"] == "o_que_mudou"
-    assert "Insight-chave" in result.summary_text
+    assert result.key_takeaways["items"][0]["command_hint"] == "!ia"
+    assert "Empresas aceleram monetização de IA — !ia" in result.summary_text
     assert mock_session.commit.called
     assert mock_session.add.called
