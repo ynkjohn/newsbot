@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from db.engine import async_session
 from db.models import FeedSource
