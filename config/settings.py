@@ -51,7 +51,19 @@ class Settings(BaseSettings):
     @property
     def pipeline_hours_list(self) -> list[int]:
         """Hours (0–23) for morning, midday, afternoon, evening pipelines in order."""
-        return [int(h.strip()) for h in self.pipeline_hours.split(",") if h.strip()]
+        raw_hours = [h.strip() for h in self.pipeline_hours.split(",") if h.strip()]
+        if len(raw_hours) != 4:
+            raise ValueError("pipeline_hours must contain exactly 4 comma-separated hours")
+
+        try:
+            hours = [int(hour) for hour in raw_hours]
+        except ValueError as exc:
+            raise ValueError("pipeline_hours values must be integers") from exc
+
+        if any(hour < 0 or hour > 23 for hour in hours):
+            raise ValueError("pipeline_hours values must be between 0 and 23")
+
+        return hours
 
     @property
     def pipeline_schedule_display(self) -> str:

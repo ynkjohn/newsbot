@@ -1,11 +1,9 @@
 import asyncio
 import random
 import re
-import time
 
-import requests
+import httpx
 import structlog
-from requests.exceptions import ConnectionError, RequestException, Timeout
 from sqlalchemy.exc import SQLAlchemyError
 
 from config.settings import settings
@@ -27,7 +25,7 @@ def _format_phone(phone_number: str) -> str:
     return f"{phone}@s.whatsapp.net"
 
 
-def _send_whatsapp_message(phone_number: str, text: str) -> dict | None:
+async def _send_whatsapp_message(phone_number: str, text: str) -> dict | None:
     url = f"{settings.whatsapp_bridge_url}/send"
     payload = {"number": _format_phone(phone_number), "text": text}
     headers = {}
@@ -37,42 +35,33 @@ def _send_whatsapp_message(phone_number: str, text: str) -> dict | None:
     max_retries = 3
     backoff_delays = [1, 5, 10]
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
-            response.raise_for_status()
-            return response.json()
-        except Timeout:
-            if attempt < max_retries:
-                time.sleep(backoff_delays[attempt - 1])
-                continue
-            logger.error(f"WhatsApp timeout after {max_retries} attempts to {phone_number}")
-            return None
-        except ConnectionError as exc:
-            if attempt < max_retries:
-                logger.warning(
-                    f"WhatsApp connection error on attempt {attempt}/{max_retries} to {phone_number}: {exc}"
-                )
-                time.sleep(backoff_delays[attempt - 1])
-                continue
-            logger.error(f"WhatsApp connection error after {max_retries} attempts to {phone_number}")
-            return None
-        except requests.exceptions.HTTPError as exc:
-            status_code = exc.response.status_code if hasattr(exc.response, "status_code") else None
-            if status_code and 400 <= status_code < 500:
-                logger.error(f"WhatsApp Bridge client error {status_code}: {exc}")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                return response.json()
+            except httpx.TimeoutException:
+                if attempt < max_retries:
+                    await asyncio.sleep(backoff_delays[attempt - 1])
+                    continue
+                logger.error(f"WhatsApp timeout after {max_retries} attempts to {phone_number}")
                 return None
-            if status_code and 500 <= status_code < 600 and attempt < max_retries:
-                time.sleep(backoff_delays[attempt - 1])
-                continue
-            logger.error(f"WhatsApp Bridge HTTP error: {exc}")
-            return None
-        except RequestException as exc:
-            logger.error(f"WhatsApp Bridge request error: {type(exc).__name__}: {exc}")
-            return None
-        except Exception as exc:
-            logger.error(f"Unexpected WhatsApp error: {type(exc).__name__}: {exc}")
-            return None
+            except httpx.ConnectError as exc:
+                if attempt < max_retries:
+                    logger.warning(
+                        f"WhatsApp bridge connection failed, retrying in {backoff_delays[attempt - 1]}s: {exc}"
+                    )
+                    await asyncio.sleep(backoff_delays[attempt - 1])
+                    continue
+                logger.error(f"WhatsApp bridge unavailable after {max_retries} attempts: {exc}")
+                return None
+            except httpx.HTTPStatusError as exc:
+                logger.error(f"WhatsApp bridge HTTP error: {exc}")
+                return None
+            except httpx.RequestError as exc:
+                logger.error(f"WhatsApp send failed: {exc}")
+                return None
 
     return None
 
@@ -108,7 +97,7 @@ async def send_digest(subscribers: list[Subscriber], summaries: list[Summary], p
 
             part_sent = False
             for attempt in range(1, 4):
-                result = await asyncio.to_thread(_send_whatsapp_message, subscriber.phone_number, part)
+                result = await _send_whatsapp_message(subscriber.phone_number, part)
                 if result:
                     part_sent = True
                     subscriber_sent = True
@@ -148,7 +137,7 @@ async def send_digest(subscribers: list[Subscriber], summaries: list[Summary], p
 
 async def send_single_message(phone_number: str, text: str) -> str | None:
     await rate_limiter.acquire()
-    result = await asyncio.to_thread(_send_whatsapp_message, phone_number, text)
+    result = await _send_whatsapp_message(phone_number, text)
     if result:
         return "sent"
     logger.error(f"Failed to send message to {phone_number}")

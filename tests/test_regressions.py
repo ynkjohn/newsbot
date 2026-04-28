@@ -1,19 +1,20 @@
 import asyncio
 import datetime
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
+platform.machine = lambda: "AMD64"
+
 import pytest
+from config.settings import Settings
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import delivery.whatsapp_sender as whatsapp_sender
-import interactions.command_handlers as command_handlers
 import interactions.command_router as command_router
-import interactions.question_handler as question_handler
-import interactions.subscriber_manager as subscriber_manager
-import interactions.webhook_handler as webhook_handler
+from config import time_utils
 from db.models import Base, DeliveryLog, Subscriber, Summary
 
 
@@ -29,11 +30,155 @@ class _DummyLimiter:
         return None
 
 
+def test_pipeline_hours_list_accepts_four_valid_hours():
+    settings = Settings(pipeline_hours="7,12,17,21")
+
+    assert settings.pipeline_hours_list == [7, 12, 17, 21]
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("7,12,17", "exactly 4"),
+        ("7,12,17,21,23", "exactly 4"),
+        ("7,12,nope,21", "integers"),
+        ("7,12,24,21", "between 0 and 23"),
+        ("7,12,-1,21", "between 0 and 23"),
+    ],
+)
+def test_pipeline_hours_list_rejects_invalid_values(value, message):
+    settings = Settings(pipeline_hours=value)
+
+    with pytest.raises(ValueError, match=message):
+        settings.pipeline_hours_list
+
+
+@pytest.mark.asyncio
+async def test_send_whatsapp_message_retries_timeout_without_blocking_sleep(monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+
+    attempts = []
+    sleeps = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, json, headers):
+            attempts.append((url, json, headers))
+            if len(attempts) == 1:
+                raise whatsapp_sender.httpx.TimeoutException("slow bridge")
+            return FakeResponse()
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(whatsapp_sender.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(whatsapp_sender.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(whatsapp_sender.settings, "whatsapp_bridge_url", "http://bridge:3000")
+    monkeypatch.setattr(whatsapp_sender.settings, "whatsapp_bridge_token", "secret")
+
+    result = await whatsapp_sender._send_whatsapp_message("5511999999999", "oi")
+
+    assert result == {"ok": True}
+    assert len(attempts) == 2
+    assert sleeps == [1]
+    assert attempts[0][1] == {"number": "5511999999999@s.whatsapp.net", "text": "oi"}
+    assert attempts[0][2] == {"Authorization": "Bearer secret"}
+
+
+@pytest.mark.asyncio
+async def test_send_whatsapp_message_returns_none_after_retries(monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+
+    attempts = []
+    sleeps = []
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, json, headers):
+            attempts.append((url, json, headers))
+            raise whatsapp_sender.httpx.ConnectError("bridge down")
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(whatsapp_sender.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(whatsapp_sender.asyncio, "sleep", fake_sleep)
+
+    result = await whatsapp_sender._send_whatsapp_message("5511999999999", "oi")
+
+    assert result is None
+    assert len(attempts) == 3
+    assert sleeps == [1, 5]
+
+
+@pytest.mark.asyncio
+async def test_manual_pipeline_returns_traceable_run_id(monkeypatch):
+    from app import app
+
+    async def fake_pipeline():
+        return None
+
+    created_tasks = []
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+
+        class FakeTask:
+            def add_done_callback(self, callback):
+                return None
+
+        return FakeTask()
+
+    monkeypatch.setattr("app.run_morning_pipeline", fake_pipeline)
+    monkeypatch.setattr("app.asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("interactions.admin_auth.settings.admin_username", "admin")
+    monkeypatch.setattr("interactions.admin_auth.settings.admin_password", "test-password")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/run-pipeline/morning", auth=("admin", "test-password"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "started"
+    assert payload["period"] == "morning"
+    assert isinstance(payload["run_id"], str)
+    assert len(payload["run_id"]) >= 8
+    assert len(created_tasks) == 1
+
+    created_tasks[0].close()
+
+
 def test_parse_message_preserves_unknown_news_command():
     assert command_router.parse_message("!pis") == ("command", "!pis")
 
 
 def test_help_text_explains_headline_drilldown_commands():
+    import interactions.command_handlers as command_handlers
+
     response = command_handlers.HELP_TEXT
 
     assert "manchetes curtas por editoria" in response
@@ -44,6 +189,8 @@ def test_help_text_explains_headline_drilldown_commands():
 
 @pytest.mark.asyncio
 async def test_unknown_news_command_resolves_to_drilldown(monkeypatch):
+    import interactions.command_handlers as command_handlers
+
     called_with: list[str] = []
 
     async def fake_build_drilldown_response_for_command(command: str) -> str | None:
@@ -187,6 +334,8 @@ def test_render_item_drilldown_preserves_watchlist_acronym():
 
 
 def test_normalize_group_question_removes_numeric_mentions():
+    import interactions.question_handler as question_handler
+
     cleaned = question_handler._normalize_group_question(
         "@229373315686421 qual e a principal noticia da noite?"
     )
@@ -194,6 +343,8 @@ def test_normalize_group_question_removes_numeric_mentions():
 
 
 def test_single_headline_question_detection():
+    import interactions.question_handler as question_handler
+
     assert (
         question_handler._is_single_headline_question(
             "qual e a principal noticia da noite?"
@@ -205,6 +356,9 @@ def test_single_headline_question_detection():
 
 @pytest.mark.asyncio
 async def test_ignored_dm_does_not_create_subscriber(tmp_path, monkeypatch):
+    import interactions.subscriber_manager as subscriber_manager
+    import interactions.webhook_handler as webhook_handler
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "ignored.db")
     monkeypatch.setattr(webhook_handler, "async_session", sessionmaker)
     monkeypatch.setattr(subscriber_manager, "async_session", sessionmaker)
@@ -220,6 +374,10 @@ async def test_ignored_dm_does_not_create_subscriber(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_group_question_does_not_create_subscriber(tmp_path, monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+    import interactions.subscriber_manager as subscriber_manager
+    import interactions.webhook_handler as webhook_handler
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "group.db")
     monkeypatch.setattr(webhook_handler, "async_session", sessionmaker)
     monkeypatch.setattr(subscriber_manager, "async_session", sessionmaker)
@@ -245,6 +403,10 @@ async def test_group_question_does_not_create_subscriber(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_group_subscribe_command_uses_full_group_jid(tmp_path, monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+    import interactions.subscriber_manager as subscriber_manager
+    import interactions.webhook_handler as webhook_handler
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "group_subscribe.db")
     monkeypatch.setattr(webhook_handler, "async_session", sessionmaker)
     monkeypatch.setattr(subscriber_manager, "async_session", sessionmaker)
@@ -267,6 +429,8 @@ async def test_group_subscribe_command_uses_full_group_jid(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_retrieve_context_uses_last_24_hours_across_date_boundary(tmp_path, monkeypatch):
+    import interactions.question_handler as question_handler
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "context.db")
     monkeypatch.setattr(question_handler, "async_session", sessionmaker)
 
@@ -295,6 +459,8 @@ async def test_retrieve_context_uses_last_24_hours_across_date_boundary(tmp_path
 
 @pytest.mark.asyncio
 async def test_send_digest_does_not_mark_summary_sent_on_total_failure(tmp_path, monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "send_fail.db")
     monkeypatch.setattr(whatsapp_sender, "async_session", sessionmaker)
     monkeypatch.setattr(whatsapp_sender, "rate_limiter", _DummyLimiter())
@@ -304,7 +470,10 @@ async def test_send_digest_does_not_mark_summary_sent_on_total_failure(tmp_path,
         lambda summaries, preferences: summaries,
     )
     monkeypatch.setattr(whatsapp_sender, "split_message", lambda text: ["parte 1"])
-    monkeypatch.setattr(whatsapp_sender, "_send_whatsapp_message", lambda phone, text: None)
+    async def fake_send_failure(phone: str, text: str) -> None:
+        return None
+
+    monkeypatch.setattr(whatsapp_sender, "_send_whatsapp_message", fake_send_failure)
 
     async with sessionmaker() as session:
         subscriber = Subscriber(phone_number="5511999999999", active=True)
@@ -337,6 +506,8 @@ async def test_send_digest_does_not_mark_summary_sent_on_total_failure(tmp_path,
 
 @pytest.mark.asyncio
 async def test_send_digest_logs_once_per_summary_on_multipart_success(tmp_path, monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "send_success.db")
     monkeypatch.setattr(whatsapp_sender, "async_session", sessionmaker)
     monkeypatch.setattr(whatsapp_sender, "rate_limiter", _DummyLimiter())
@@ -346,11 +517,10 @@ async def test_send_digest_logs_once_per_summary_on_multipart_success(tmp_path, 
         lambda summaries, preferences: summaries,
     )
     monkeypatch.setattr(whatsapp_sender, "split_message", lambda text: ["parte 1", "parte 2"])
-    monkeypatch.setattr(
-        whatsapp_sender,
-        "_send_whatsapp_message",
-        lambda phone, text: {"success": True},
-    )
+    async def fake_send_success(phone: str, text: str) -> dict:
+        return {"success": True}
+
+    monkeypatch.setattr(whatsapp_sender, "_send_whatsapp_message", fake_send_success)
 
     async with sessionmaker() as session:
         subscriber = Subscriber(phone_number="5511999999999", active=True)
@@ -383,6 +553,8 @@ async def test_send_digest_logs_once_per_summary_on_multipart_success(tmp_path, 
 
 @pytest.mark.asyncio
 async def test_send_digest_prefers_group_jid_over_legacy_plain_id(tmp_path, monkeypatch):
+    import delivery.whatsapp_sender as whatsapp_sender
+
     engine, sessionmaker = await _create_sessionmaker(tmp_path / "group_send.db")
     monkeypatch.setattr(whatsapp_sender, "async_session", sessionmaker)
     monkeypatch.setattr(whatsapp_sender, "rate_limiter", _DummyLimiter())
@@ -395,7 +567,7 @@ async def test_send_digest_prefers_group_jid_over_legacy_plain_id(tmp_path, monk
 
     sent_to: list[str] = []
 
-    def fake_send(phone: str, text: str) -> dict:
+    async def fake_send(phone: str, text: str) -> dict:
         sent_to.append(phone)
         return {"success": True}
 
@@ -438,14 +610,13 @@ def test_alembic_delivery_log_matches_orm_model(tmp_path):
     subprocess.run(
         [
             sys.executable,
-            "-m",
-            "alembic",
             "-c",
+            "import platform, runpy, sys; "
+            "platform.machine = lambda: 'AMD64'; "
+            "sys.argv = ['alembic', '-c', sys.argv[1], '-x', sys.argv[2], 'upgrade', 'head']; "
+            "runpy.run_module('alembic', run_name='__main__')",
             str(root / "alembic.ini"),
-            "-x",
             f"sqlalchemy.url={sync_url}",
-            "upgrade",
-            "head",
         ],
         cwd=root,
         check=True,

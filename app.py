@@ -2,6 +2,7 @@ import asyncio
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import structlog
@@ -178,10 +179,25 @@ async def trigger_pipeline(period: str):
             content={"error": "period must be 'morning', 'midday', 'afternoon' or 'evening'"},
         )
 
-    asyncio.create_task(pipeline_map[period]())
+    run_id = uuid4().hex[:12]
+    logger.info(f"Manual pipeline run requested: period={period} run_id={run_id}")
+    task = asyncio.create_task(pipeline_map[period]())
+
+    def log_pipeline_result(done_task: asyncio.Task, requested_period: str = period, requested_run_id: str = run_id) -> None:
+        try:
+            done_task.result()
+        except Exception as exc:
+            logger.error(
+                f"Manual pipeline run failed: period={requested_period} run_id={requested_run_id} error={type(exc).__name__}: {exc}"
+            )
+        else:
+            logger.info(f"Manual pipeline run finished: period={requested_period} run_id={requested_run_id}")
+
+    task.add_done_callback(log_pipeline_result)
     return {
         "status": "started",
         "period": period,
+        "run_id": run_id,
         "message": "Pipeline iniciado. Acompanhe a execução nos logs do serviço newsbot.",
     }
 

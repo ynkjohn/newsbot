@@ -192,27 +192,6 @@ async function startWhatsApp() {
           body: JSON.stringify(payload),
         });
         console.log(`Webhook enviado -> status ${resp.status}`);
-        // #region agent log
-        fetch("http://127.0.0.1:7797/ingest/1c7cbab7-0325-47ac-bf7a-e14b3081771f", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "8222de",
-          },
-          body: JSON.stringify({
-            sessionId: "8222de",
-            location: "whatsapp-bridge/index.js:webhook_response",
-            message: "webhook_post_result",
-            hypothesisId: "H5",
-            data: {
-              willSendAuth: Boolean(WHATSAPP_BRIDGE_TOKEN),
-              responseStatus: resp.status,
-            },
-            timestamp: Date.now(),
-            runId: "pre",
-          }),
-        }).catch(() => {});
-        // #endregion
       } catch (err) {
         console.error(`Erro no webhook: ${err.message}`);
       }
