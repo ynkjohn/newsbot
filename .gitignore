@@ -15,6 +15,16 @@ venv/
 .vscode/
 .idea/
 
+# Local tooling
+.claude/
+.mcp.json
+.worktrees/
+powershell-logs/
+docs/superpowers/plans/
+
+# JavaScript
+node_modules/
+
 # OS
 .DS_Store
 Thumbs.db
