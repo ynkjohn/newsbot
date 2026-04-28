@@ -32,15 +32,24 @@ SEED_FEEDS = [
 ]
 
 
-async def seed_feeds_if_empty() -> None:
-    """Insert seed feeds into the database if the feed_sources table is empty."""
+async def sync_seed_feeds() -> int:
+    """Insert missing seed feeds into the database and return count of inserted ones."""
     async with async_session() as session:
-        count = await session.scalar(select(func.count()).select_from(FeedSource))
-        if count and count > 0:
-            return
+        result = await session.execute(select(FeedSource.url))
+        existing_urls = set(result.scalars().all())
 
+        inserted_count = 0
         for feed_data in SEED_FEEDS:
-            source = FeedSource(**feed_data)
-            session.add(source)
+            if feed_data["url"] not in existing_urls:
+                source = FeedSource(**feed_data)
+                session.add(source)
+                inserted_count += 1
 
-        await session.commit()
+        if inserted_count > 0:
+            await session.commit()
+        return inserted_count
+
+
+async def seed_feeds_if_empty() -> None:
+    """Compatibility wrapper for app.py."""
+    await sync_seed_feeds()

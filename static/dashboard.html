@@ -3,1376 +3,390 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NewsBot</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,700;6..72,800&family=IBM+Plex+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #03070c;
-        --bg-panel: rgba(10, 18, 28, 0.78);
-        --surface: rgba(20, 32, 45, 0.84);
-        --surface-strong: rgba(25, 40, 60, 0.95);
-        --line: rgba(255, 255, 255, 0.08);
-        --line-strong: rgba(255, 255, 255, 0.16);
-        --line-glow: rgba(243, 196, 95, 0.24);
-        --text: #f8fafc;
-        --text-dim: #94a3b8;
-        --text-soft: #64748b;
-        --accent: #fbbf24;
-        --accent-soft: rgba(251, 191, 36, 0.35);
-        --accent-gradient: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-        --ok: #4ade80;
-        --danger: #f87171;
-        --warn: #fbbf24;
-        --shadow-premium: 0 18px 40px rgba(0, 0, 0, 0.46), inset 0 1px 1px rgba(255, 255, 255, 0.08);
-        --radius-panel: 22px;
-        --radius-card: 18px;
-        --topbar-height: 64px;
-      }
-
-      * { box-sizing: border-box; }
-      html, body { height: 100%; }
-
-      body {
-        margin: 0;
-        overflow: hidden;
-        color: var(--text);
-        font-family: "Inter", sans-serif;
-        background-color: var(--bg);
-        background-image:
-          radial-gradient(at 0% 0%, #0f172a 0, transparent 50%),
-          radial-gradient(at 100% 100%, #1e1b4b 0, transparent 50%);
-      }
-
-      button, input { font: inherit; }
-
-      .mesh-bg {
-        position: fixed;
-        inset: 0;
-        z-index: -1;
-        opacity: 0.48;
-        filter: blur(80px);
-        pointer-events: none;
-      }
-
-      .mesh-1, .mesh-2 {
-        position: absolute;
-        width: 48%;
-        height: 48%;
-        border-radius: 50%;
-      }
-
-      .mesh-1 {
-        top: -10%;
-        left: -10%;
-        background: rgba(251, 191, 36, 0.05);
-      }
-
-      .mesh-2 {
-        right: -10%;
-        bottom: -10%;
-        background: rgba(79, 209, 197, 0.05);
-      }
-
-      .app-shell {
-        height: 100vh;
-        padding: 14px 16px 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-
-      .glass-panel {
-        background: var(--bg-panel);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        border: 1px solid var(--line);
-        border-radius: var(--radius-panel);
-        box-shadow: var(--shadow-premium);
-      }
-
-      .topbar {
-        min-height: var(--topbar-height);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        padding: 10px 16px;
-      }
-
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-
-      .brand-mark {
-        width: 36px;
-        height: 36px;
-        display: grid;
-        place-items: center;
-        border-radius: 11px;
-        background: var(--accent-gradient);
-        color: #000;
-        font-weight: 800;
-        font-family: "IBM Plex Mono", monospace;
-        box-shadow: 0 0 15px rgba(251, 191, 36, 0.3);
-      }
-
-      .brand h1 {
-        margin: 0;
-        font-family: "Newsreader", serif;
-        font-size: 1.24rem;
-        letter-spacing: -0.02em;
-      }
-
-      .nav-group {
-        display: flex;
-        padding: 3px;
-        border: 1px solid var(--line);
-        border-radius: 13px;
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      .nav-btn,
-      .btn-premium,
-      .btn-action-large,
-      .cat-nav-btn,
-      .sort-chip,
-      .period-chip,
-      .status-chip,
-      .source-chip,
-      .drawer-close,
-      .metric-card {
-        transition:
-          transform 0.18s ease,
-          background 0.22s ease,
-          border-color 0.22s ease,
-          color 0.22s ease,
-          box-shadow 0.22s ease;
-      }
-
-      .nav-btn {
-        padding: 8px 16px;
-        border: none;
-        border-radius: 10px;
-        background: transparent;
-        color: var(--text-dim);
-        font-size: 0.82rem;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .nav-btn.is-active {
-        background: var(--surface-strong);
-        color: var(--accent);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-      }
-
-      .topbar-meta {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .clock {
-        padding-right: 10px;
-        border-right: 1px solid var(--line);
-        color: var(--text-soft);
-        font-family: "IBM Plex Mono", monospace;
-        font-size: 0.74rem;
-      }
-
-      .tag-premium {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 7px 10px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.05);
-        color: var(--text-dim);
-        font-size: 0.68rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-      }
-
-      .tag-premium.is-ok {
-        color: var(--ok);
-        border-color: rgba(74, 222, 128, 0.24);
-        background: rgba(74, 222, 128, 0.08);
-      }
-
-      .tag-premium.is-warn {
-        color: var(--warn);
-        border-color: var(--accent-soft);
-        background: rgba(251, 191, 36, 0.08);
-      }
-
-      .tag-premium.is-danger {
-        color: var(--danger);
-        border-color: rgba(248, 113, 113, 0.24);
-        background: rgba(248, 113, 113, 0.08);
-      }
-
-      .btn-premium {
-        height: 36px;
-        padding: 0 14px;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        border: 1px solid var(--line);
-        border-radius: 11px;
-        background: rgba(255, 255, 255, 0.05);
-        color: var(--text);
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .btn-premium:hover,
-      .sort-chip:hover,
-      .period-chip:hover,
-      .status-chip:hover,
-      .source-chip:hover,
-      .cat-nav-btn:hover,
-      .drawer-close:hover,
-      .metric-card:hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: var(--line-strong);
-      }
-
-      .view-content {
-        display: none;
-        min-height: 0;
-      }
-
-      .view-content.active {
-        display: flex;
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-        padding-right: 2px;
-      }
-
-      #view-ops {
-        flex-direction: column;
-        gap: 14px;
-      }
-
-      .hero-panel {
-        padding: 18px 20px 16px;
-      }
-
-      .hero-copy {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 16px;
-      }
-
-      .hero-copy h2 {
-        margin: 0;
-        font-family: "Newsreader", serif;
-        font-size: 2.1rem;
-        line-height: 1.02;
-      }
-
-      .hero-copy p {
-        margin: 8px 0 0;
-        color: var(--text-dim);
-        font-size: 0.94rem;
-      }
-
-      .metrics-row {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 16px;
-      }
-
-      .metric-card {
-        min-height: 118px;
-        padding: 18px 18px 16px;
-        position: relative;
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: var(--radius-card);
-        background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
-        cursor: pointer;
-        text-align: left;
-      }
-
-      .metric-card.is-highlight {
-        border-color: var(--accent-soft);
-      }
-
-      .metric-card.is-danger {
-        border-color: rgba(248, 113, 113, 0.28);
-      }
-
-      .metric-card.is-warn {
-        border-color: rgba(251, 191, 36, 0.28);
-      }
-
-      .metric-label {
-        display: block;
-        margin-bottom: 6px;
-        color: var(--text-soft);
-        font-size: 0.64rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-      }
-
-      .metric-value {
-        font-family: "Newsreader", serif;
-        font-size: 2rem;
-        line-height: 1;
-      }
-
-      .metric-meta {
-        margin-top: 10px;
-        color: var(--text-dim);
-        font-size: 0.78rem;
-        line-height: 1.45;
-      }
-
-      .countdown-label {
-        display: block;
-        margin-top: 8px;
-        color: var(--accent);
-        font-size: 0.72rem;
-        font-weight: 600;
-      }
-
-      .ops-grid {
-        display: grid;
-        grid-template-columns: 1.7fr 1fr;
-        gap: 14px;
-        min-height: 0;
-      }
-
-      .report-panel, .actions-panel {
-        min-height: 0;
-        padding: 18px;
-      }
-
-      .report-panel {
-        display: flex;
-        flex-direction: column;
-      }
-
-      .panel-heading {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 14px;
-      }
-
-      .panel-heading h3 {
-        margin: 0;
-        font-family: "Newsreader", serif;
-        font-size: 1.3rem;
-      }
-
-      .panel-heading p {
-        margin: 6px 0 0;
-        color: var(--text-dim);
-        font-size: 0.82rem;
-      }
-
-      .report-tags {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .ops-report-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        margin-bottom: 14px;
-      }
-
-      .ops-report-item {
-        min-height: 96px;
-        padding: 14px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: rgba(255,255,255,0.02);
-        cursor: pointer;
-        transition:
-          transform 0.18s ease,
-          border-color 0.22s ease,
-          background 0.22s ease,
-          box-shadow 0.22s ease;
-      }
-
-      .ops-report-item:hover {
-        transform: translateY(-1px);
-        border-color: var(--line-glow);
-        background: rgba(255,255,255,0.04);
-      }
-
-      .ops-report-item span {
-        display: block;
-        margin-bottom: 6px;
-        color: var(--text-soft);
-        font-size: 0.64rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      .ops-report-item strong {
-        display: block;
-        font-size: 0.94rem;
-      }
-
-      .ops-narrative {
-        margin: 0;
-        color: var(--text-dim);
-        font-size: 0.88rem;
-        line-height: 1.5;
-      }
-
-      .timeline-block, .feed-block {
-        margin-top: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .timeline-block.runs-block {
-        flex: 1;
-        min-height: 0;
-      }
-
-      .section-kicker {
-        color: var(--text-soft);
-        font-size: 0.66rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-      }
-
-      .run-timeline {
-        display: grid;
-        gap: 10px;
-      }
-
-      #recentRuns {
-        min-height: 0;
-        max-height: min(42vh, 420px);
-        overflow: auto;
-        padding-right: 4px;
-      }
-
-      .run-item {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 10px;
-        align-items: center;
-        padding: 12px 14px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: rgba(255,255,255,0.02);
-      }
-
-      .run-title-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .run-title-row strong { font-size: 0.94rem; }
-      .run-time {
-        display: block;
-        margin-top: 4px;
-        color: var(--text-soft);
-        font-size: 0.74rem;
-      }
-
-      .run-metrics {
-        color: var(--text-dim);
-        font-size: 0.76rem;
-        text-align: right;
-        line-height: 1.45;
-      }
-
-      .mini-timeline {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-      }
-
-      .mini-slot {
-        padding: 12px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: rgba(255,255,255,0.02);
-      }
-
-      .mini-slot.is-current {
-        border-color: var(--accent-soft);
-        box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.12);
-      }
-
-      .mini-slot.is-completed {
-        background: linear-gradient(135deg, rgba(74,222,128,0.09) 0%, rgba(255,255,255,0.02) 100%);
-      }
-
-      .mini-slot.is-running,
-      .mini-slot.is-upcoming,
-      .mini-slot.is-pending {
-        background: linear-gradient(135deg, rgba(251,191,36,0.08) 0%, rgba(255,255,255,0.02) 100%);
-      }
-
-      .mini-slot.is-failed {
-        background: linear-gradient(135deg, rgba(248,113,113,0.08) 0%, rgba(255,255,255,0.02) 100%);
-      }
-
-      .mini-slot strong {
-        display: block;
-        font-size: 0.9rem;
-      }
-
-      .mini-slot small {
-        display: block;
-        margin-top: 6px;
-        color: var(--text-soft);
-      }
-
-      .mini-slot p {
-        margin: 10px 0 0;
-        color: var(--text-dim);
-        font-size: 0.8rem;
-        line-height: 1.45;
-      }
-
-      .feed-item {
-        padding: 12px 14px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: rgba(255,255,255,0.02);
-      }
-
-      .feed-item strong {
-        display: block;
-        font-size: 0.92rem;
-      }
-
-      .feed-item span {
-        display: block;
-        margin-top: 6px;
-        color: var(--text-soft);
-        font-size: 0.76rem;
-      }
-
-      .feed-item p {
-        margin: 8px 0 0;
-        color: var(--danger);
-        font-size: 0.8rem;
-        line-height: 1.45;
-      }
-
-      .btn-action-large {
-        width: 100%;
-        margin-bottom: 8px;
-        padding: 12px 14px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: rgba(255,255,255,0.03);
-        color: var(--text);
-        text-align: left;
-        cursor: pointer;
-      }
-
-      .btn-action-large:hover {
-        background: rgba(255,255,255,0.06);
-        border-color: var(--accent);
-        transform: translateX(2px);
-      }
-
-      .btn-action-large strong {
-        display: block;
-        margin-bottom: 2px;
-        font-size: 0.94rem;
-      }
-
-      .btn-action-large span {
-        color: var(--text-soft);
-        font-size: 0.74rem;
-      }
-
-      #view-reading { min-height: 0; }
-
-      .reading-shell {
-        flex: 1;
-        min-height: 0;
-        display: grid;
-        grid-template-columns: 220px minmax(0, 1fr);
-        gap: 14px;
-      }
-
-      .category-panel {
-        min-height: 0;
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .category-panel-head h3 {
-        margin: 0;
-        font-family: "Newsreader", serif;
-        font-size: 1.1rem;
-      }
-
-      .category-panel-head p {
-        margin: 6px 0 0;
-        color: var(--text-dim);
-        font-size: 0.8rem;
-      }
-
-      .category-nav {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .cat-nav-btn {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 12px 14px;
-        border: 1px solid transparent;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.02);
-        color: var(--text-dim);
-        cursor: pointer;
-      }
-
-      .cat-nav-btn.is-active {
-        background: var(--surface-strong);
-        border-color: var(--accent-soft);
-        color: var(--accent);
-      }
-
-      .cat-count {
-        min-width: 22px;
-        padding: 2px 7px;
-        border-radius: 999px;
-        background: rgba(0, 0, 0, 0.3);
-        color: var(--text-soft);
-        font-size: 0.64rem;
-      }
-
-      .cat-nav-btn.is-active .cat-count {
-        background: var(--accent);
-        color: #000;
-      }
-
-      .reading-main {
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .reading-toolbar {
-        position: sticky;
-        top: 0;
-        z-index: 12;
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .toolbar-top {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .search-box {
-        flex: 1;
-        min-width: 220px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 0 14px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: rgba(255,255,255,0.03);
-      }
-
-      .search-box span {
-        color: var(--text-soft);
-        font-size: 0.68rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-      }
-
-      .search-box input {
-        width: 100%;
-        height: 42px;
-        border: none;
-        outline: none;
-        background: transparent;
-        color: var(--text);
-      }
-
-      .toolbar-bottom {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .toolbar-group {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-
-      .segmented-control,
-      .period-control,
-      .status-control,
-      .source-control {
-        display: inline-flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      .sort-chip,
-      .period-chip,
-      .status-chip,
-      .source-chip {
-        min-height: 36px;
-        padding: 0 12px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: rgba(255,255,255,0.03);
-        color: var(--text-dim);
-        cursor: pointer;
-      }
-
-      .sort-chip.is-active,
-      .period-chip.is-active,
-      .status-chip.is-active,
-      .source-chip.is-active {
-        background: rgba(251, 191, 36, 0.1);
-        border-color: var(--accent-soft);
-        color: var(--accent);
-      }
-
-      .reading-surface {
-        flex: 1;
-        min-height: 0;
-      }
-
-      .summary-list-panel {
-        height: 100%;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-
-      .list-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 16px 18px 12px;
-        border-bottom: 1px solid var(--line);
-      }
-
-      .list-head h3 {
-        margin: 4px 0 0;
-        font-family: "Newsreader", serif;
-        font-size: 1.18rem;
-      }
-
-      .list-head p {
-        margin: 6px 0 0;
-        color: var(--text-dim);
-        font-size: 0.8rem;
-      }
-
-      .list-stats {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-      }
-
-      .summary-list {
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-        padding: 16px 18px 18px;
-        display: grid;
-        gap: 12px;
-      }
-
-      .summary-card {
-        width: 100%;
-        padding: 18px 18px 16px;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
-        color: var(--text);
-        text-align: left;
-        cursor: pointer;
-        position: relative;
-        overflow: hidden;
-        transition: transform 0.18s ease, border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
-      }
-
-      .summary-card:hover {
-        background: rgba(255,255,255,0.05);
-        border-color: var(--line-glow);
-        transform: translateY(-1px);
-      }
-
-      .summary-card.is-selected {
-        border-color: rgba(251, 191, 36, 0.45);
-        background: linear-gradient(135deg, rgba(251,191,36,0.08) 0%, rgba(255,255,255,0.02) 100%);
-        box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.08), 0 16px 28px rgba(0, 0, 0, 0.28);
-      }
-
-      .summary-card.is-pending {
-        border-color: rgba(251, 191, 36, 0.28);
-      }
-
-      .summary-card-meta {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 10px;
-        color: var(--text-soft);
-        font-size: 0.7rem;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-      }
-
-      .summary-card-title {
-        display: block;
-        margin: 0;
-        font-family: "Newsreader", serif;
-        font-size: 1.22rem;
-        line-height: 1.16;
-      }
-
-      .summary-card-preview {
-        display: -webkit-box;
-        margin-top: 10px;
-        overflow: hidden;
-        color: var(--text-dim);
-        font-size: 0.92rem;
-        line-height: 1.52;
-        -webkit-line-clamp: 3;
-        -webkit-box-orient: vertical;
-      }
-
-      .summary-card-foot {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-top: 12px;
-        color: var(--text-soft);
-        font-size: 0.76rem;
-      }
-
-      .empty-state, .skeleton-state {
-        padding: 40px 24px;
-        border: 1px dashed rgba(255, 255, 255, 0.12);
-        border-radius: 18px;
-        color: var(--text-soft);
-        text-align: center;
-      }
-
-      .drawer-backdrop {
-        position: fixed;
-        inset: 0;
-        z-index: 1100;
-        border: none;
-        background: rgba(2, 6, 12, 0.48);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.24s ease;
-      }
-
-      .drawer-backdrop.is-open {
-        opacity: 1;
-        pointer-events: auto;
-      }
-
-      .summary-drawer {
-        position: fixed;
-        top: 16px;
-        right: 16px;
-        bottom: 16px;
-        z-index: 1200;
-        width: min(520px, calc(100vw - 32px));
-        display: flex;
-        flex-direction: column;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateX(108%);
-        transition: transform 0.28s ease, opacity 0.22s ease;
-      }
-
-      .summary-drawer.is-open {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateX(0);
-      }
-
-      .drawer-shell {
-        min-height: 0;
-        display: flex;
-        flex: 1;
-        flex-direction: column;
-      }
-
-      .drawer-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 14px;
-        padding: 18px 18px 14px;
-        border-bottom: 1px solid var(--line);
-      }
-
-      .drawer-meta {
-        margin: 10px 0 0;
-        color: var(--text-soft);
-        font-size: 0.76rem;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-      }
-
-      .drawer-close {
-        width: 36px;
-        height: 36px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: rgba(255,255,255,0.04);
-        color: var(--text-dim);
-        cursor: pointer;
-      }
-
-      .drawer-body {
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-        padding: 20px 18px 22px;
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-
-      .drawer-title {
-        margin: 0;
-        font-family: "Newsreader", serif;
-        font-size: 2rem;
-        line-height: 1.08;
-      }
-
-      .drawer-section {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .drawer-section-label {
-        color: var(--accent);
-        font-size: 0.66rem;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-      }
-
-      .drawer-bullets {
-        margin: 0;
-        padding-left: 20px;
-        display: grid;
-        gap: 10px;
-        color: var(--text-dim);
-        line-height: 1.55;
-      }
-
-      .drawer-insight {
-        margin: 0;
-        padding: 16px;
-        border: 1px solid var(--line-glow);
-        border-radius: 16px;
-        background: rgba(251, 191, 36, 0.05);
-        color: var(--accent);
-        line-height: 1.58;
-      }
-
-      .drawer-text-block {
-        padding: 16px;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: rgba(255,255,255,0.02);
-      }
-
-      .drawer-text-block strong {
-        display: block;
-        margin-bottom: 8px;
-      }
-
-      .drawer-text-block p {
-        margin: 0;
-        color: var(--text-dim);
-        line-height: 1.62;
-      }
-
-      .drawer-source-list {
-        margin: 0;
-        padding-left: 20px;
-        display: grid;
-        gap: 10px;
-      }
-
-      .drawer-source-list a {
-        color: var(--text);
-        word-break: break-word;
-      }
-
-      .view-content.active::-webkit-scrollbar,
-      #recentRuns::-webkit-scrollbar,
-      .summary-list::-webkit-scrollbar,
-      .drawer-body::-webkit-scrollbar {
-        width: 10px;
-      }
-
-      .view-content.active::-webkit-scrollbar-thumb,
-      #recentRuns::-webkit-scrollbar-thumb,
-      .summary-list::-webkit-scrollbar-thumb,
-      .drawer-body::-webkit-scrollbar-thumb {
-        border: 2px solid transparent;
-        border-radius: 999px;
-        background: rgba(148, 163, 184, 0.24);
-        background-clip: padding-box;
-      }
-
-      .view-content.active::-webkit-scrollbar-track,
-      #recentRuns::-webkit-scrollbar-track,
-      .summary-list::-webkit-scrollbar-track,
-      .drawer-body::-webkit-scrollbar-track {
-        background: transparent;
-      }
-
-      .nav-btn:focus-visible,
-      .btn-premium:focus-visible,
-      .btn-action-large:focus-visible,
-      .cat-nav-btn:focus-visible,
-      .sort-chip:focus-visible,
-      .period-chip:focus-visible,
-      .status-chip:focus-visible,
-      .source-chip:focus-visible,
-      .drawer-close:focus-visible,
-      .metric-card:focus-visible,
-      .summary-card:focus-visible,
-      .ops-report-item:focus-visible {
-        outline: 2px solid rgba(251, 191, 36, 0.65);
-        outline-offset: 2px;
-      }
-
-      #toast {
-        position: fixed;
-        right: 20px;
-        bottom: 20px;
-        z-index: 1300;
-        padding: 14px 18px;
-        border: 1px solid var(--accent);
-        border-radius: 12px;
-        background: var(--surface-strong);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        transform: translateY(100px);
-        opacity: 0;
-        transition: transform 0.24s ease, opacity 0.24s ease;
-      }
-
-      #toast.show {
-        transform: translateY(0);
-        opacity: 1;
-      }
-
-      #toast.error {
-        border-color: rgba(248, 113, 113, 0.5);
-        color: var(--danger);
-      }
-
-      @media (max-width: 1024px) {
-        body { overflow: auto; }
-        .app-shell { height: auto; min-height: 100vh; }
-        .topbar { flex-wrap: wrap; }
-        .metrics-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .ops-grid, .reading-shell { grid-template-columns: 1fr; }
-        .summary-list-panel { height: auto; }
-        #recentRuns { max-height: none; overflow: visible; padding-right: 0; }
-      }
-
-      @media (max-width: 720px) {
-        .app-shell { padding: 12px; }
-        .topbar-meta { width: 100%; flex-wrap: wrap; }
-        .metrics-row, .ops-report-grid, .mini-timeline { grid-template-columns: 1fr; }
-        .toolbar-bottom, .toolbar-group, .list-head { align-items: stretch; }
-        .toolbar-group, .list-stats { justify-content: flex-start; }
-        .run-item { grid-template-columns: 1fr; }
-        .run-metrics { text-align: left; }
-        .summary-drawer {
-          top: auto;
-          right: 0;
-          bottom: 0;
-          left: 0;
-          width: 100%;
-          max-height: 88vh;
-          border-radius: 22px 22px 0 0;
-          transform: translateY(106%);
-        }
-        .summary-drawer.is-open { transform: translateY(0); }
-      }
-    </style>
+    <title>NewsBot — Intelligence</title>
+    <link rel="stylesheet" href="/static/dashboard.css?v=20260425-4" />
   </head>
   <body>
-    <div class="mesh-bg">
-      <div class="mesh-1"></div>
-      <div class="mesh-2"></div>
-    </div>
-
     <div class="app-shell">
-      <header class="topbar glass-panel">
-        <div class="brand">
-          <div class="brand-mark">NB</div>
-          <h1>NewsBot</h1>
+      <header class="topbar">
+        <div class="brand-section">
+          <div class="brand-text">
+            <h1>NewsBot</h1>
+            <span class="brand-sub">Intelligence Dashboard · Edição diária</span>
+          </div>
         </div>
 
-        <nav class="nav-group" aria-label="Seções da dashboard">
-          <button class="nav-btn is-active" id="nav-ops" data-view="ops" type="button">Operação</button>
-          <button class="nav-btn" id="nav-reading" data-view="reading" type="button">Leitura</button>
-        </nav>
+        <div class="date-display" id="dateDisplay">SEGUNDA-FEIRA, 21 DE ABRIL DE 2026</div>
 
-        <div class="topbar-meta">
-          <div id="clock" class="clock">00:00:00</div>
-          <div id="bridgePill" class="tag-premium">Bridge: ...</div>
-          <div id="healthPill" class="tag-premium">Health: --</div>
-          <button class="btn-premium" id="btnRefresh" type="button">Recarregar</button>
+        <div class="status-section">
+          <div class="status-stack">
+            <div id="bridgePill" class="status-badge neutral">Bridge</div>
+            <div id="healthPill" class="status-badge neutral">Health</div>
+          </div>
+          <div id="clock" class="time-display">00:00:00</div>
         </div>
       </header>
 
-      <main id="view-ops" class="view-content active" aria-labelledby="nav-ops">
-        <section class="glass-panel hero-panel">
-          <div class="hero-copy">
-            <div>
-              <h2>Sala de operação</h2>
-              <p>Painel vivo da operação, com leitura pronta para ação.</p>
-            </div>
-            <div class="report-tags">
-              <div id="opsStatusTag" class="tag-premium">Status: ...</div>
-              <div id="scheduleTag" class="tag-premium">Agenda: --</div>
-            </div>
-          </div>
+      <nav class="nav-row" aria-label="Seções da dashboard">
+        <div class="nav-tabs">
+          <button class="nav-btn is-active" id="nav-ops" data-view="ops" type="button">Operação</button>
+          <button class="nav-btn" id="nav-reading" data-view="reading" type="button">Leitura</button>
+          <button class="nav-btn" id="nav-subscribers" data-view="subscribers" type="button">Assinantes</button>
+          <button class="nav-btn" id="nav-feeds" data-view="feeds" type="button">Fontes</button>
+          <button class="nav-btn" id="nav-analytics" data-view="analytics" type="button">Analytics</button>
+        </div>
+        <div class="nav-actions">
+          <button class="btn-theme" id="btnThemeToggle" type="button" aria-pressed="false">
+            <span class="btn-theme-icon" id="themeIcon" aria-hidden="true">☾</span>
+            <span id="themeLabel">Modo noturno</span>
+          </button>
+          <button class="btn-reload" id="btnRefresh" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 2v6h-6"></path>
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 2v6h6"></path>
+              <path d="M21 12a9 9 0 1 0-9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+            </svg>
+            <span id="refreshLabel">Recarregar</span>
+          </button>
+        </div>
+      </nav>
 
-          <div id="metricsRow" class="metrics-row"></div>
-        </section>
+      <section class="alert-banner is-warn" id="globalAlertBanner" aria-live="polite">
+        <div class="alert-copy">
+          <span class="alert-label">Panorama</span>
+          <span id="opsNarrative">Carregando panorama operacional...</span>
+        </div>
+        <div class="timeline-mini" id="miniTimeline"></div>
+      </section>
 
-        <div class="ops-grid">
-          <section class="glass-panel report-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>Pulso do dia</h3>
-                <p id="opsNarrative" class="ops-narrative">Carregando panorama operacional...</p>
+      <div class="view-container">
+        <main id="view-ops" class="view-content active" aria-labelledby="nav-ops">
+          <section class="ops-hero">
+            <div class="ops-hero-head">
+              <div class="ops-hero-copy-block">
+                <div class="ops-hero-kicker-row">
+                  <p class="eyebrow">Deck operacional</p>
+                  <span class="hero-inline-note">Métricas clicáveis, menos troca de contexto</span>
+                </div>
+                <h2>Painel do turno</h2>
+                <p class="ops-hero-copy" id="opsNarrativeLong">Use as métricas para navegar rápido pela operação.</p>
               </div>
-              <div class="report-tags">
-                <span id="lastUpdatedAt" class="tag-premium">Atualizado: --</span>
+
+              <div class="ops-hero-tags">
+                <span id="opsStatusTag" class="tag-premium">Status</span>
+                <span id="scheduleTag" class="tag-premium">Agenda</span>
+                <span id="lastUpdatedAt" class="tag-premium">Atualizado --</span>
               </div>
             </div>
 
-            <div class="ops-report-grid">
-              <article class="ops-report-item" data-quick-action="reading:pending" tabindex="0" role="button">
-                <span>Pendências</span>
-                <strong id="pendingSummaries">--</strong>
-              </article>
-              <article class="ops-report-item" data-quick-action="focus:recentRuns" tabindex="0" role="button">
-                <span>Falhas de entrega</span>
-                <strong id="failedDeliveries">--</strong>
-              </article>
-              <article class="ops-report-item" data-quick-action="focus:metricsRow" tabindex="0" role="button">
-                <span>Bridge</span>
-                <strong id="bridgeStatusText">--</strong>
-              </article>
-              <article class="ops-report-item" data-quick-action="focus:miniTimeline" tabindex="0" role="button">
-                <span>Próxima janela</span>
-                <strong id="nextSendLabel">--</strong>
-              </article>
-            </div>
-
-            <div class="timeline-block">
-              <span class="section-kicker">Mini timeline</span>
-              <div id="miniTimeline" class="mini-timeline"></div>
-            </div>
-
-            <div class="timeline-block runs-block">
-              <span class="section-kicker">Últimos pipelines</span>
-              <div id="recentRuns" class="run-timeline"></div>
-            </div>
+            <div class="ops-grid-top" id="metricsRow" aria-live="polite"></div>
           </section>
 
-          <aside class="glass-panel actions-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>Controle manual</h3>
-                <p>Atalhos de reenvio e disparo imediato, sem sair da dashboard.</p>
+          <div class="ops-grid-bottom">
+            <section class="ops-section ops-section-pulse">
+              <div class="ops-section-head">
+                <div>
+                  <p class="eyebrow">Pulso</p>
+                  <h3>Pontos de ação</h3>
+                </div>
+                <span class="section-note">Atalhos e indicadores operacionais</span>
               </div>
-            </div>
-            <button class="btn-action-large" id="btn-retry" type="button">
-              <strong>Reenviar pendências de hoje</strong>
-              <span>Refaz a entrega dos resumos ainda não enviados.</span>
-            </button>
-            <button class="btn-action-large" data-pipeline-period="morning" type="button">
-              <strong>Forçar manhã</strong>
-              <span>Executa a janela matinal agora.</span>
-            </button>
-            <button class="btn-action-large" data-pipeline-period="midday" type="button">
-              <strong>Forçar meio-dia</strong>
-              <span>Executa a janela intermediária imediatamente.</span>
-            </button>
-            <button class="btn-action-large" data-pipeline-period="afternoon" type="button">
-              <strong>Forçar tarde</strong>
-              <span>Executa a janela da tarde agora.</span>
-            </button>
-            <button class="btn-action-large" data-pipeline-period="evening" type="button">
-              <strong>Forçar noite</strong>
-              <span>Executa a janela final do dia agora.</span>
-            </button>
 
-            <div class="feed-block">
-              <span class="section-kicker">Feeds em atenção</span>
-              <div id="feedAlerts" class="run-timeline"></div>
-            </div>
+              <div class="pulso-grid">
+                <button class="pulso-card pulso-card-action" data-quick-action="reading:pending" type="button">
+                  <span>Pendências</span>
+                  <h3 id="pendingSummaries">--</h3>
+                  <p>Abre a leitura com foco no que ainda não foi enviado.</p>
+                </button>
+
+                <button class="pulso-card pulso-card-action" data-quick-action="focus:recentRuns" type="button">
+                  <span>Falhas de entrega</span>
+                  <h3 id="failedDeliveries" class="is-danger">--</h3>
+                  <p>Leva para o histórico recente de execuções.</p>
+                </button>
+
+                <button class="pulso-card pulso-card-action" data-quick-action="focus:metricsRow" type="button">
+                  <span>Bridge</span>
+                  <h3 id="bridgeStatusText">--</h3>
+                  <p>Mostra o estado atual da integração com WhatsApp.</p>
+                </button>
+
+                <button class="pulso-card pulso-card-action" data-quick-action="focus:miniTimeline" type="button">
+                  <span>Próxima janela</span>
+                  <h3 id="nextSendLabel">--</h3>
+                  <p>Aponta a próxima execução programada do pipeline.</p>
+                </button>
+              </div>
+            </section>
+
+            <section class="ops-section ops-section-manual">
+              <div class="ops-section-head">
+                <div>
+                  <p class="eyebrow">Controle manual</p>
+                  <h3>Ações de pipeline</h3>
+                </div>
+              </div>
+
+              <p class="manual-desc">Reenvio e disparo imediato, sem sair da dashboard.</p>
+
+              <div class="action-stack">
+                <button class="btn-action-row" id="btn-retry" type="button">
+                  <div class="btn-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                  </div>
+                  <div class="btn-text">
+                    <h4>Reenviar pendências de hoje</h4>
+                    <p>Refaz a entrega dos resumos ainda não enviados.</p>
+                  </div>
+                  <div class="btn-arrow">→</div>
+                </button>
+                <button class="btn-action-row" id="btn-last24h" type="button">
+                  <div class="btn-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                  </div>
+                  <div class="btn-text">
+                    <h4>Rodar ultimas 24h</h4>
+                    <p>Reprocessa a janela recente incluindo materias ja vistas.</p>
+                  </div>
+                  <div class="btn-arrow">→</div>
+                </button>
+              </div>
+
+              <div class="manual-window-card">
+                <div class="manual-window-copy">
+                  <span class="manual-window-label">Executar janela especifica</span>
+                </div>
+                <div class="manual-window-buttons" aria-label="Forcar janela">
+                  <button class="btn-secondary btn-sm" data-pipeline-period="morning" type="button">Manha</button>
+                  <button class="btn-secondary btn-sm" data-pipeline-period="midday" type="button">Meio-dia</button>
+                  <button class="btn-secondary btn-sm" data-pipeline-period="afternoon" type="button">Tarde</button>
+                  <button class="btn-secondary btn-sm" data-pipeline-period="evening" type="button">Noite</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="ops-section ops-section-runs" id="recentRunsPanel">
+              <div class="ops-section-head">
+                <div>
+                  <p class="eyebrow">Historico</p>
+                  <h3>Ultimos pipelines</h3>
+                </div>
+                <span class="section-note">Execucoes recentes</span>
+              </div>
+
+              <div id="recentRuns" class="stack-list" aria-live="polite"></div>
+            </section>
+
+            <section class="ops-section ops-section-feeds" id="feedAlertsPanel">
+              <div class="ops-section-head">
+                <div>
+                  <p class="eyebrow">Monitoramento</p>
+                  <h3>Feeds em atenção</h3>
+                </div>
+                <span class="section-note">Fontes com falha ou inatividade</span>
+              </div>
+
+              <div id="feedAlerts" class="stack-list feed-alert-list" aria-live="polite"></div>
+            </section>
+          </div>
+        </main>
+
+        <main id="view-reading" class="view-content" aria-labelledby="nav-reading">
+          <aside class="reading-sidebar">
+            <div class="sidebar-title">Calendário</div>
+            <div id="dateNav" class="category-list" aria-label="Datas de leitura"></div>
           </aside>
-        </div>
-      </main>
 
-      <main id="view-reading" class="view-content" aria-labelledby="nav-reading">
-        <section class="reading-shell">
-          <aside class="glass-panel category-panel">
-            <div class="category-panel-head">
-              <h3>Categorias</h3>
-              <p>Use a lateral para navegar pelos grupos do dia.</p>
-            </div>
+          <section class="reading-main">
+            <div class="reading-toolbar">
+              <div class="reading-toolbar-main">
+                <div class="reading-toolbar-title">
+                  <p class="eyebrow">Leitura</p>
+                  <h3 id="readingResultsTitle">Resumos do dia</h3>
+                  <p class="reading-toolbar-copy" id="readingSelectionHint">Agrupado por janela e categoria para escolher mais rapido.</p>
+                </div>
 
-            <div id="categoryNav" class="category-nav" aria-label="Categorias de leitura"></div>
-          </aside>
-
-          <div class="reading-main">
-            <div class="glass-panel reading-toolbar">
-              <div class="toolbar-top">
-                <label class="search-box" for="searchInput">
-                  <span>Busca</span>
-                  <input type="search" id="searchInput" placeholder="Buscar no resumo..." />
+                <label class="search-shell" for="searchInput">
+                  <span class="search-shell-label">Busca</span>
+                  <input type="search" id="searchInput" class="search-input" placeholder="Buscar nos resumos..." />
                 </label>
+
+                <div class="reading-toolbar-actions">
+                  <button class="btn-secondary" id="btn-clearFilters" type="button">Limpar filtros</button>
+                </div>
               </div>
 
-              <div class="toolbar-bottom">
-                <div class="toolbar-group">
-                  <div id="sortControl" class="segmented-control" role="group" aria-label="Ordenação"></div>
-                  <div id="periodControl" class="period-control" role="group" aria-label="Filtrar por período"></div>
+              <div class="filters-grid">
+                <div class="filter-group">
+                  <span class="filter-group-label">Ordenação</span>
+                  <div class="filters-row" id="sortControl" role="group" aria-label="Ordenação"></div>
                 </div>
 
-                <button class="btn-premium" id="btn-clearFilters" type="button">Limpar filtros</button>
-              </div>
+                <div class="filter-group">
+                  <span class="filter-group-label">Período</span>
+                  <div class="filters-row" id="periodControl" role="group" aria-label="Filtrar por período"></div>
+                </div>
 
-              <div class="toolbar-bottom">
-                <div class="toolbar-group">
-                  <div id="statusControl" class="status-control" role="group" aria-label="Filtrar por status"></div>
-                  <div id="sourceControl" class="source-control" role="group" aria-label="Filtrar por fontes"></div>
+                <div class="filter-group">
+                  <span class="filter-group-label">Status</span>
+                  <div class="filters-row" id="statusControl" role="group" aria-label="Filtrar por status"></div>
+                </div>
+
+                <div class="filter-group">
+                  <span class="filter-group-label">Fontes e insight</span>
+                  <div class="filters-row" id="sourceControl" role="group" aria-label="Filtrar por fontes e insight"></div>
                 </div>
               </div>
             </div>
 
-            <div class="reading-surface">
-              <section class="glass-panel summary-list-panel" aria-live="polite">
-                <div class="list-head">
-                  <div>
-                    <span class="section-kicker">Leitura</span>
-                    <h3 id="readingResultsTitle">Resumos do dia</h3>
-                    <p>Selecione um card para abrir o detalhe lateral.</p>
-                  </div>
-                  <div class="list-stats">
-                    <span class="tag-premium" id="readingResultCount">0 resumos</span>
-                    <span class="tag-premium" id="readingContextTag">Todas</span>
-                  </div>
-                </div>
+            <div class="list-header-meta">
+              <span id="readingResultCount">0 resumos</span>
+              <span class="meta-divider">·</span>
+              <span id="readingContextTag">Todas as categorias</span>
+            </div>
 
-                <div id="summaries" class="summary-list"></div>
+            <div id="summaries" class="summary-list" aria-live="polite"></div>
+          </section>
+        </main>
+
+        <main id="view-subscribers" class="view-content" aria-labelledby="nav-subscribers">
+          <section class="ops-hero">
+            <div class="ops-hero-head">
+              <div class="ops-hero-copy-block">
+                <div class="ops-hero-kicker-row">
+                  <p class="eyebrow">Base de Leitores</p>
+                </div>
+                <h2>Gestão de Assinantes</h2>
+                <p class="ops-hero-copy">Controle quem recebe os resumos, status de atividade e veja as preferências configuradas via bot.</p>
+              </div>
+              <div class="ops-hero-tags">
+                <span id="subscribersTotalTag" class="tag-premium">0 assinantes</span>
+              </div>
+            </div>
+            
+            <div class="ops-section" style="margin-top: 14px; padding: 0;">
+              <div class="summary-period-header-clean">
+                <h3>Todos os usuários</h3>
+              </div>
+              <div class="summary-list-clean" id="subscribersList" style="background: var(--bg-panel-strong); border-radius: 0 0 var(--radius-xl) var(--radius-xl); overflow: hidden;">
+                <!-- Content will be loaded dynamically -->
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <main id="view-feeds" class="view-content" aria-labelledby="nav-feeds">
+          <section class="ops-hero">
+            <div class="ops-hero-head">
+              <div class="ops-hero-copy-block">
+                <div class="ops-hero-kicker-row">
+                  <p class="eyebrow">Fontes de Notícias</p>
+                </div>
+                <h2>Gestão de Feeds RSS</h2>
+                <p class="ops-hero-copy">Gerencie as fontes de notícias usadas pelo NewsBot. Ative ou pause feeds e monitore erros de extração.</p>
+              </div>
+              <div class="ops-hero-tags">
+                <span id="feedsTotalTag" class="tag-premium">0 fontes</span>
+              </div>
+            </div>
+            
+            <div class="ops-section" style="margin-top: 14px; padding: 0;">
+              <div class="summary-period-header-clean">
+                <h3>Todos os feeds</h3>
+              </div>
+              <div class="summary-list-clean" id="feedsList" style="background: var(--bg-panel-strong); border-radius: 0 0 var(--radius-xl) var(--radius-xl); overflow: hidden;">
+                <!-- Content will be loaded dynamically -->
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <main id="view-analytics" class="view-content" aria-labelledby="nav-analytics">
+          <section class="ops-hero">
+            <div class="ops-hero-head">
+              <div class="ops-hero-copy-block">
+                <div class="ops-hero-kicker-row">
+                  <p class="eyebrow">Inteligência de Dados</p>
+                </div>
+                <h2>Métricas e Performance</h2>
+                <p class="ops-hero-copy">Visualize o volume de notícias, uso de tokens e saúde da entrega nos últimos 7 dias.</p>
+              </div>
+            </div>
+            
+            <div class="ops-grid-bottom" style="margin-top: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+              <section class="ops-section">
+                <div class="ops-section-head">
+                  <h3>Notícias por Categoria</h3>
+                </div>
+                <div style="padding: 20px; height: 300px;">
+                  <canvas id="chartCategories"></canvas>
+                </div>
+              </section>
+              
+              <section class="ops-section">
+                <div class="ops-section-head">
+                  <h3>Uso de Tokens (LLM)</h3>
+                </div>
+                <div style="padding: 20px; height: 300px;">
+                  <canvas id="chartTokens"></canvas>
+                </div>
               </section>
             </div>
-          </div>
-        </section>
-      </main>
+          </section>
+        </main>
+      </div>
     </div>
 
-    <button id="drawerBackdrop" class="drawer-backdrop" type="button" aria-hidden="true" tabindex="-1"></button>
+    <button id="drawerBackdrop" class="drawer-overlay" type="button" aria-hidden="true" tabindex="-1"></button>
 
-    <aside id="summaryDrawer" class="summary-drawer glass-panel" aria-hidden="true" aria-labelledby="drawerTitle">
-      <div class="drawer-shell">
-        <header class="drawer-header">
-          <div class="drawer-header-copy">
-            <span id="drawerTag" class="tag-premium">Categoria</span>
-            <p id="drawerMeta" class="drawer-meta">—</p>
-          </div>
-          <button id="drawerClose" class="drawer-close" type="button" aria-label="Fechar detalhes">×</button>
-        </header>
+    <aside id="summaryDrawer" class="drawer" aria-hidden="true" aria-labelledby="drawerTitle">
+      <header class="drawer-head">
+        <div class="drawer-head-copy">
+          <span id="drawerTag" class="tag-premium">Categoria</span>
+          <h2 id="drawerTitle">Selecione um resumo</h2>
+          <p id="drawerMeta" class="drawer-meta">—</p>
+        </div>
+        <button id="drawerClose" class="btn-close" type="button" aria-label="Fechar detalhes">×</button>
+      </header>
 
-        <div class="drawer-body">
-          <h2 id="drawerTitle" class="drawer-title">Selecione um resumo</h2>
+      <div class="drawer-body">
+        <div id="drawerInsightSection" class="insight-box" hidden>
+          <p id="drawerInsight"></p>
+        </div>
 
-          <section class="drawer-section">
-            <span class="drawer-section-label">Destaques</span>
-            <ul id="drawerBullets" class="drawer-bullets"></ul>
-          </section>
+        <div class="summary-section">
+          <h4>Destaques</h4>
+          <ul id="drawerBullets"></ul>
+        </div>
 
-          <section id="drawerInsightSection" class="drawer-section">
-            <span class="drawer-section-label">Insight</span>
-            <p id="drawerInsight" class="drawer-insight"></p>
-          </section>
+        <div class="summary-section">
+          <h4>Leitura completa</h4>
+          <div id="drawerSections"></div>
+        </div>
 
-          <section class="drawer-section">
-            <span class="drawer-section-label">Leitura completa</span>
-            <div id="drawerSections"></div>
-          </section>
-
-          <section id="drawerSourcesSection" class="drawer-section">
-            <span class="drawer-section-label">Fontes</span>
-            <ul id="drawerSources" class="drawer-source-list"></ul>
-          </section>
+        <div id="drawerSourcesSection" class="summary-section" hidden>
+          <h4>Fontes</h4>
+          <ul id="drawerSources" class="drawer-source-list"></ul>
         </div>
       </div>
+
+      <footer id="drawerFooter" class="drawer-head" style="border-top: 1px solid var(--line); border-bottom: 0; padding: 16px 20px;" hidden>
+        <button id="btnApproveSummary" class="btn-reload" style="width: 100%; justify-content: center; background: var(--status-ok); color: white; border: 0;">
+          Aprovar e liberar para envio
+        </button>
+      </footer>
     </aside>
 
     <div id="toast" role="status" aria-live="polite"></div>
 
-    <script src="/static/dashboard-extra.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/dashboard-extra.js?v=20260425-3"></script>
   </body>
 </html>

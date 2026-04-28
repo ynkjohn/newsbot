@@ -138,6 +138,14 @@ def test_dashboard_requires_admin_auth():
     assert response.status_code == 401
 
 
+def test_dashboard_page_serves_intelligence_ui():
+    response = client.get("/dashboard", headers=_get_admin_headers())
+    assert response.status_code == 200
+    assert "NewsBot — Intelligence" in response.text
+    assert 'href="/static/dashboard.css' in response.text
+    assert 'src="/static/dashboard-extra.js' in response.text
+
+
 def test_dashboard_accepts_list_key_takeaways(monkeypatch):
     from datetime import datetime, timezone
     from unittest.mock import MagicMock

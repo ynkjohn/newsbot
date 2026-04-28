@@ -1,5 +1,6 @@
 (function () {
-  const STORAGE_KEY = "newsbot-dashboard-v9";
+  const STORAGE_KEY = "newsbot-dashboard-v10";
+  const THEME_STORAGE_KEY = "newsbot-dashboard-theme-v1";
   const AUTO_REFRESH_MS = 60_000;
   const CLOCK_REFRESH_MS = 1_000;
   const DEFAULT_TIMEZONE = "America/Sao_Paulo";
@@ -32,10 +33,9 @@
     { value: "all", label: "Todas" },
     { value: "politica-brasil", label: "Política Nacional" },
     { value: "economia-brasil", label: "Economia Nacional" },
-    { value: "politica-mundao", label: "Geopolítica" },
-    { value: "economia-mundao", label: "Economia Global" },
-    { value: "economia-cripto", label: "Criptoativos" },
-    { value: "tech", label: "Tecnologia" },
+    { value: "geopolitica", label: "Geopolítica" },
+    { value: "economia-mundo", label: "Economia Internacional" },
+    { value: "cripto-tech", label: "Cripto/Tech" },
   ];
 
   const STATUS_META = {
@@ -50,11 +50,36 @@
     sent: { label: "Enviado", tone: "ok" },
   };
 
+  const CATEGORY_DOT_CLASS = {
+    "cripto-tech": "dot-crypto",
+    tech: "dot-tech",
+    "economia-mundo": "dot-econ",
+    "economia-internacional": "dot-econ",
+    "economia-brasil": "dot-econ",
+    "politica-brasil": "dot-br",
+    "politica-internacional": "dot-world",
+    "economia-cripto": "dot-crypto",
+    geopolitica: "dot-world",
+  };
+
+  const CATEGORY_LABEL_OVERRIDES = {
+    "politica-brasil": "Política Nacional",
+    "economia-brasil": "Economia Nacional",
+    geopolitica: "Geopolítica",
+    "economia-mundo": "Economia Internacional",
+    "cripto-tech": "Cripto/Tech",
+    "politica-internacional": "Política Internacional",
+    "economia-internacional": "Economia Internacional",
+    "economia-cripto": "Criptoativos",
+    tech: "Tecnologia",
+  };
+
   const state = {
     loading: true,
+    theme: "light",
     view: "ops",
     payload: null,
-    currentCategory: "all",
+    currentDate: "all",
     filters: {
       search: "",
       sort: "newest",
@@ -73,6 +98,10 @@
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function preferredTheme() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
 
   function escapeHtml(value) {
@@ -96,24 +125,62 @@
     return `${value} ${value === 1 ? singular : plural}`;
   }
 
+  function titleCaseWords(value) {
+    return String(value || "")
+      .split(" ")
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  }
+
+  function displayCategoryLabel(category, fallbackLabel = "") {
+    if (CATEGORY_LABEL_OVERRIDES[category]) {
+      return CATEGORY_LABEL_OVERRIDES[category];
+    }
+
+    const fallback = String(fallbackLabel || "").trim();
+    if (fallback && normalizeText(fallback) !== normalizeText(category)) {
+      return fallback;
+    }
+
+    return titleCaseWords(String(category || "").replaceAll("-", " "));
+  }
+
+  function displayPeriodLabel(period, fallbackLabel = "") {
+    return PERIOD_OPTIONS.find((option) => option.value === period)?.label || fallbackLabel || "Janela";
+  }
+
   function timezone() {
     return state.payload?.timezone || DEFAULT_TIMEZONE;
+  }
+
+  function applyTheme(theme, { persist = true } = {}) {
+    state.theme = theme === "dark" ? "dark" : "light";
+    document.body.dataset.theme = state.theme;
+
+    if (persist) {
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, state.theme);
+      } catch (error) {
+        console.debug("Falha ao salvar tema", error);
+      }
+    }
+  }
+
+  function loadThemePreference() {
+    try {
+      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+      applyTheme(savedTheme === "dark" || savedTheme === "light" ? savedTheme : preferredTheme(), { persist: false });
+    } catch (error) {
+      console.debug("Falha ao carregar tema", error);
+      applyTheme(preferredTheme(), { persist: false });
+    }
   }
 
   function parseDate(value) {
     if (!value) return null;
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  function formatTime(value) {
-    const date = parseDate(value);
-    if (!date) return "--";
-    return new Intl.DateTimeFormat("pt-BR", {
-      timeZone: timezone(),
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
   }
 
   function formatDateTime(value) {
@@ -126,6 +193,18 @@
       hour: "2-digit",
       minute: "2-digit",
     }).format(date);
+  }
+
+  function formatLongDate(value) {
+    return new Intl.DateTimeFormat("pt-BR", {
+      timeZone: timezone(),
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })
+      .format(value)
+      .toUpperCase();
   }
 
   function formatCountdown(target) {
@@ -141,7 +220,6 @@
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-
     return `Faltam ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
   }
 
@@ -173,21 +251,62 @@
     return Array.isArray(readingData().cards) ? readingData().cards : [];
   }
 
-  function setTag(node, text, tone) {
+  function setTag(node, text, tone = "") {
     if (!node) return;
     node.className = tone ? `tag-premium is-${tone}` : "tag-premium";
     node.textContent = text;
   }
 
+  function setStatusBadge(node, text, tone = "") {
+    if (!node) return;
+    const mappedTone =
+      tone === "danger" ? "err" : tone === "ok" ? "ok" : tone === "warn" ? "warn" : "neutral";
+    node.className = `status-badge ${mappedTone}`;
+    node.textContent = text;
+  }
+
+  function renderThemeToggle() {
+    const button = byId("btnThemeToggle");
+    const icon = byId("themeIcon");
+    const label = byId("themeLabel");
+    const isDark = state.theme === "dark";
+
+    if (button) {
+      button.setAttribute("aria-pressed", String(isDark));
+    }
+    if (icon) {
+      icon.textContent = isDark ? "☀" : "☾";
+    }
+    if (label) {
+      label.textContent = isDark ? "Modo claro" : "Modo noturno";
+    }
+  }
+
+  function setText(id, text) {
+    const node = byId(id);
+    if (node) {
+      node.textContent = text;
+    }
+  }
+
+  function renderDateDisplay() {
+    const node = byId("dateDisplay");
+    if (!node) return;
+    node.textContent = formatLongDate(new Date());
+  }
+
   function updateClock() {
     const clock = byId("clock");
-    if (!clock) return;
-    clock.textContent = new Intl.DateTimeFormat("pt-BR", {
-      timeZone: timezone(),
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(new Date());
+    if (clock) {
+      clock.textContent = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: timezone(),
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(new Date());
+    }
+
+    renderDateDisplay();
     updateCountdowns();
   }
 
@@ -222,7 +341,7 @@
 
     state.toastTimer = window.setTimeout(() => {
       toast.classList.remove("show", "error");
-    }, 2600);
+    }, 2800);
   }
 
   function loadPreferences() {
@@ -231,8 +350,8 @@
       if (!raw) return;
 
       const saved = JSON.parse(raw);
-      state.view = saved.view === "reading" ? "reading" : "ops";
-      state.currentCategory = saved.currentCategory || "all";
+      state.view = ["reading", "subscribers", "feeds", "analytics"].includes(saved.view) ? saved.view : "ops";
+      state.currentDate = saved.currentDate || "all";
       state.filters.search = saved.search || "";
       state.filters.sort = saved.sort === "oldest" ? "oldest" : "newest";
       state.filters.periods = new Set(saved.periods || []);
@@ -250,7 +369,7 @@
         STORAGE_KEY,
         JSON.stringify({
           view: state.view,
-          currentCategory: state.currentCategory,
+          currentDate: state.currentDate,
           search: state.filters.search,
           sort: state.filters.sort,
           periods: Array.from(state.filters.periods),
@@ -264,52 +383,53 @@
     }
   }
 
-  function categoryOptions() {
+  function dateOptions() {
     const cards = allCards();
-    const counts = readingData().categoryCounts || {};
-    const firstCardByCategory = new Map();
-
+    const counts = {};
     cards.forEach((card) => {
-      if (!firstCardByCategory.has(card.category)) {
-        firstCardByCategory.set(card.category, card);
+      if (!card.isPlaceholder) {
+        counts[card.date] = (counts[card.date] || 0) + 1;
       }
     });
 
-    const canonicalValues = new Set(CATEGORY_ORDER.map((option) => option.value));
-    const options = CATEGORY_ORDER.map((option) => {
-      if (option.value === "all") {
-        return {
-          value: option.value,
-          label: option.label,
-          count: readingData().summaryCount || cards.length,
-        };
+    const datesSet = new Set();
+    cards.forEach((card) => {
+      if (card.date) {
+        datesSet.add(card.date);
       }
-
-      const card = firstCardByCategory.get(option.value);
-      return {
-        value: option.value,
-        label: card?.categoryLabel || option.label,
-        count: counts[option.value] || 0,
-      };
     });
 
-    const extras = cards
-      .filter((card) => !canonicalValues.has(card.category))
-      .filter((card, index, list) => list.findIndex((candidate) => candidate.category === card.category) === index)
-      .sort((left, right) => (left.categoryLabel || left.category).localeCompare(right.categoryLabel || right.category, "pt-BR"))
-      .map((card) => ({
-        value: card.category,
-        label: card.categoryLabel || card.category,
-        count: counts[card.category] || 0,
-      }));
+    const dates = Array.from(datesSet).sort((a, b) => b.localeCompare(a));
+    const realCards = cards.filter((c) => !c.isPlaceholder);
 
-    return [...options, ...extras];
+    const options = [
+      {
+        value: "all",
+        label: "Todos os dias",
+        count: realCards.length,
+      }
+    ];
+
+    dates.forEach((dateStr) => {
+      const parts = dateStr.split("-");
+      let label = dateStr;
+      if (parts.length === 3) {
+        label = `${parts[2]}/${parts[1]}`;
+      }
+      options.push({
+        value: dateStr,
+        label: label,
+        count: counts[dateStr] || 0,
+      });
+    });
+
+    return options;
   }
 
   function ensureValidState() {
-    const validCategories = new Set(categoryOptions().map((option) => option.value));
-    if (!validCategories.has(state.currentCategory)) {
-      state.currentCategory = "all";
+    const validDates = new Set(dateOptions().map((option) => option.value));
+    if (!validDates.has(state.currentDate)) {
+      state.currentDate = validDates.size > 1 ? Array.from(validDates)[1] : "all";
     }
 
     if (state.drawer.open && !allCards().some((card) => card.id === state.drawer.cardId)) {
@@ -338,10 +458,10 @@
 
   function filteredCards() {
     const query = normalizeText(state.filters.search);
-    let cards = [...allCards()];
+    let cards = allCards().filter((card) => !card.isPlaceholder);
 
-    if (state.currentCategory !== "all") {
-      cards = cards.filter((card) => card.category === state.currentCategory);
+    if (state.currentDate !== "all") {
+      cards = cards.filter((card) => card.date === state.currentDate);
     }
 
     if (state.filters.periods.size > 0) {
@@ -349,10 +469,7 @@
     }
 
     if (state.filters.statuses.size > 0) {
-      cards = cards.filter((card) => {
-        const status = card.isPending ? "pending" : "sent";
-        return state.filters.statuses.has(status);
-      });
+      cards = cards.filter((card) => state.filters.statuses.has(card.isPending ? "pending" : "sent"));
     }
 
     if (state.filters.sourceMin > 0) {
@@ -383,7 +500,7 @@
 
   function hasActiveFilters() {
     return (
-      state.currentCategory !== "all" ||
+      state.currentDate !== "all" ||
       Boolean(state.filters.search) ||
       state.filters.periods.size > 0 ||
       state.filters.statuses.size > 0 ||
@@ -394,7 +511,7 @@
   }
 
   function clearFilters() {
-    state.currentCategory = "all";
+    state.currentDate = dateOptions().length > 1 ? dateOptions()[1].value : "all";
     state.filters.search = "";
     state.filters.sort = "newest";
     state.filters.periods.clear();
@@ -406,7 +523,7 @@
   }
 
   function setView(view) {
-    state.view = view === "reading" ? "reading" : "ops";
+    state.view = ["reading", "subscribers", "feeds", "analytics"].includes(view) ? view : "ops";
     if (state.view !== "reading") {
       hideDrawer();
     }
@@ -421,11 +538,11 @@
     const drawer = byId("summaryDrawer");
     const backdrop = byId("drawerBackdrop");
     if (drawer) {
-      drawer.classList.remove("is-open");
+      drawer.classList.remove("open");
       drawer.setAttribute("aria-hidden", "true");
     }
     if (backdrop) {
-      backdrop.classList.remove("is-open");
+      backdrop.classList.remove("active");
     }
   }
 
@@ -437,13 +554,9 @@
 
   function activeContextLabel() {
     const parts = [];
-    const selectedCategory = categoryOptions().find((option) => option.value === state.currentCategory);
+    const selectedDate = dateOptions().find((option) => option.value === state.currentDate);
 
-    if (selectedCategory && selectedCategory.value !== "all") {
-      parts.push(selectedCategory.label);
-    } else {
-      parts.push("Todas");
-    }
+    parts.push(selectedDate && selectedDate.value !== "all" ? selectedDate.label : "Todos os dias");
 
     if (state.filters.periods.size > 0) {
       parts.push(
@@ -476,23 +589,80 @@
     return parts.join(" · ");
   }
 
+  function categoryDotClass(category) {
+    return CATEGORY_DOT_CLASS[category] || "dot-crypto";
+  }
+
+  function summaryPreview(card) {
+    const preview =
+      card.insight ||
+      (Array.isArray(card.bullets) && card.bullets.length ? card.bullets[0] : "") ||
+      (Array.isArray(card.bodySections) && card.bodySections.length ? card.bodySections[0].content : "") ||
+      card.summaryText ||
+      "";
+
+    return String(preview).replace(/\s+/g, " ").trim();
+  }
+
+  function groupCardsByPeriod(cards) {
+    const groups = [];
+    const seen = new Map();
+
+    // Ensure they follow the PERIOD_OPTIONS order
+    const orderedPeriods = PERIOD_OPTIONS.map(p => p.value);
+
+    cards.forEach((card) => {
+      const key = card.period || "unknown";
+      if (!seen.has(key)) {
+        const group = {
+          key,
+          label: displayPeriodLabel(card.period, card.periodLabel),
+          cards: [],
+        };
+        seen.set(key, group);
+        groups.push(group);
+      }
+      seen.get(key).cards.push(card);
+    });
+
+    // Sort groups by the defined period order
+    groups.sort((a, b) => {
+      const idxA = orderedPeriods.indexOf(a.key);
+      const idxB = orderedPeriods.indexOf(b.key);
+      return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
+    });
+
+    return groups;
+  }
+
+  function periodDeliveryLabel(cards) {
+    const pendingCount = cards.filter((card) => card.isPending).length;
+
+    if (!pendingCount) return "Tudo enviado";
+    if (pendingCount === cards.length) return "Tudo pendente";
+    return pluralize(pendingCount, "pendente", "pendentes");
+  }
+
   function buildMetricCards(operation) {
     const nextWindowText = operation.nextWindow
       ? `${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
       : "--:--";
+    const nextWindowLabel = operation.nextWindow
+      ? displayPeriodLabel(operation.nextWindow.period, operation.nextWindow.periodLabel)
+      : "";
 
     return [
       {
         label: "Assinantes ativos",
         value: operation.subscriberCount,
-        meta: "Base pronta para receber o próximo envio.",
+        meta: "Base pronta para o próximo envio.",
         action: "focus:metricsRow",
         tone: "",
       },
       {
         label: "Lotes de hoje",
         value: operation.todaySummaryCount,
-        meta: "Abre a leitura completa dos resumos já gerados.",
+        meta: "Abre a leitura dos resumos gerados.",
         action: "view:reading",
         tone: "",
       },
@@ -500,10 +670,11 @@
         label: "Próxima janela",
         value: nextWindowText,
         meta: operation.nextWindow
-          ? `${operation.nextWindow.periodLabel}${operation.nextWindow.isTomorrow ? " de amanhã" : " de hoje"}`
+          ? `${nextWindowLabel}${operation.nextWindow.isTomorrow ? " de amanhã" : " de hoje"}`
           : "Agenda ainda não carregada.",
         action: "focus:miniTimeline",
         tone: operation.nextWindow ? "warn" : "",
+        inverted: true,
         countdownTarget: operation.nextWindow?.scheduledAt || "",
       },
       {
@@ -511,40 +682,53 @@
         value: `${operation.healthScore}%`,
         meta: operation.inactiveFeedCount
           ? `${pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção")}.`
-          : "Operação sem alerta estrutural no momento.",
+          : "Sem alerta estrutural agora.",
         action: "focus:feedAlerts",
-        tone: healthTone(operation.healthScore) === "danger" ? "danger" : healthTone(operation.healthScore) === "warn" ? "warn" : "",
+        tone: healthTone(operation.healthScore),
       },
     ];
   }
 
   function buildNarrative(operation) {
     const bridge = bridgeMeta(operation.bridge);
-    const attention = [];
+    const fragments = [bridge.label];
 
-    if (operation.pendingSummaryCount > 0) {
-      attention.push(pluralize(operation.pendingSummaryCount, "pendência aberta", "pendências abertas"));
+    if (operation.nextWindow) {
+      fragments.push(
+        `Próxima janela ${displayPeriodLabel(operation.nextWindow.period, operation.nextWindow.periodLabel)} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`,
+      );
     }
     if (operation.failedDeliveryCount > 0) {
-      attention.push(pluralize(operation.failedDeliveryCount, "falha de entrega", "falhas de entrega"));
+      fragments.push(pluralize(operation.failedDeliveryCount, "falha de entrega", "falhas de entrega"));
+    }
+    if (operation.pendingSummaryCount > 0) {
+      fragments.push(pluralize(operation.pendingSummaryCount, "pendência aberta", "pendências abertas"));
     }
     if (operation.inactiveFeedCount > 0) {
-      attention.push(pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção"));
+      fragments.push(pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção"));
+    }
+    if (
+      operation.failedDeliveryCount === 0 &&
+      operation.pendingSummaryCount === 0 &&
+      operation.inactiveFeedCount === 0
+    ) {
+      fragments.push("sem alertas críticos");
     }
 
-    const nextWindow = operation.nextWindow
-      ? `${operation.nextWindow.periodLabel} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
-      : "sem próxima janela definida";
+    return fragments.join(" · ");
+  }
 
-    const suffix = attention.length
-      ? ` Pontos de atenção: ${attention.join(", ")}.`
-      : " Nenhum alerta crítico no momento.";
+  function buildHeroBrief(operation) {
+    const summaryBits = [
+      pluralize(operation.subscriberCount, "assinante ativo", "assinantes ativos"),
+      pluralize(operation.todaySummaryCount, "lote hoje", "lotes hoje"),
+    ];
 
-    return `${bridge.label}. ${pluralize(
-      operation.subscriberCount,
-      "assinante ativo",
-      "assinantes ativos",
-    )} e ${pluralize(operation.todaySummaryCount, "lote gerado hoje", "lotes gerados hoje")}. Próxima janela: ${nextWindow}.${suffix}`;
+    if (operation.pendingSummaryCount > 0) {
+      summaryBits.push(pluralize(operation.pendingSummaryCount, "pendência aberta", "pendências abertas"));
+    }
+
+    return `${summaryBits.join(" · ")}. Abra leitura, agenda, histórico e alertas sem sair do turno.`;
   }
 
   function renderTopbar() {
@@ -552,21 +736,53 @@
 
     if (operation) {
       const bridge = bridgeMeta(operation.bridge);
-      setTag(byId("bridgePill"), bridge.label, bridge.tone);
-      setTag(byId("healthPill"), `Health ${operation.healthScore}%`, healthTone(operation.healthScore));
+      setStatusBadge(byId("bridgePill"), bridge.label, bridge.tone);
+      setStatusBadge(byId("healthPill"), `Health ${operation.healthScore}%`, healthTone(operation.healthScore));
     } else {
-      setTag(byId("bridgePill"), "Bridge: ...", "");
-      setTag(byId("healthPill"), "Health --", "");
+      setStatusBadge(byId("bridgePill"), "Bridge", "");
+      setStatusBadge(byId("healthPill"), "Health", "");
     }
 
     const refreshButton = byId("btnRefresh");
+    const refreshLabel = byId("refreshLabel");
     if (refreshButton) {
       refreshButton.disabled = state.loading;
-      refreshButton.textContent = state.loading ? "Atualizando..." : "Recarregar";
+    }
+    if (refreshLabel) {
+      refreshLabel.textContent = state.loading ? "Atualizando..." : "Recarregar";
     }
 
+    renderThemeToggle();
+    document.body.setAttribute("data-view", state.view);
     byId("nav-ops")?.classList.toggle("is-active", state.view === "ops");
     byId("nav-reading")?.classList.toggle("is-active", state.view === "reading");
+    byId("nav-subscribers")?.classList.toggle("is-active", state.view === "subscribers");
+    byId("nav-feeds")?.classList.toggle("is-active", state.view === "feeds");
+    byId("nav-analytics")?.classList.toggle("is-active", state.view === "analytics");
+  }
+
+  function renderAlertBanner(operation) {
+    const banner = byId("globalAlertBanner");
+    if (!banner) return;
+
+    if (!operation) {
+      banner.className = "alert-banner is-warn";
+      setText("opsNarrative", "Carregando panorama operacional...");
+      setText("opsNarrativeLong", "Resumo rápido da operação será carregado aqui.");
+      return;
+    }
+
+    const tone =
+      operation.failedDeliveryCount > 0 || !operation.bridge?.connected
+        ? "danger"
+        : operation.pendingSummaryCount > 0 || operation.inactiveFeedCount > 0
+          ? "warn"
+          : "ok";
+
+    const narrative = buildNarrative(operation);
+    banner.className = `alert-banner is-${tone}`;
+    setText("opsNarrative", narrative);
+    setText("opsNarrativeLong", narrative);
   }
 
   function renderMiniTimeline(timeline) {
@@ -574,7 +790,7 @@
     if (!node) return;
 
     if (!timeline.length) {
-      node.innerHTML = '<div class="empty-state">Agenda do dia indisponível.</div>';
+      node.innerHTML = '<div class="empty-state is-compact">Agenda do dia indisponível.</div>';
       return;
     }
 
@@ -593,7 +809,7 @@
 
         return `
           <article class="mini-slot is-${escapeHtml(item.status)}${item.isCurrentWindow ? " is-current" : ""}">
-            <strong>${escapeHtml(item.periodLabel)}</strong>
+            <strong>${escapeHtml(displayPeriodLabel(item.period, item.periodLabel))}</strong>
             <small>${escapeHtml(item.timeLabel)} · ${escapeHtml(meta.label)}</small>
             <p>${escapeHtml(caption)}</p>
           </article>
@@ -616,7 +832,7 @@
         const meta = statusMeta(run.status);
         const timeBits = [
           run.startedAtLabel && run.startedAtLabel !== "--" ? `Início ${run.startedAtLabel}` : null,
-          run.finishedAtLabel && run.finishedAtLabel !== "--" ? `fim ${run.finishedAtLabel}` : null,
+          run.finishedAtLabel && run.finishedAtLabel !== "--" ? `Fim ${run.finishedAtLabel}` : null,
           run.durationSeconds ? `${run.durationSeconds}s` : null,
         ]
           .filter(Boolean)
@@ -628,7 +844,7 @@
           <article class="run-item">
             <div>
               <div class="run-title-row">
-                <strong>${escapeHtml(run.periodLabel)}</strong>
+                <strong>${escapeHtml(displayPeriodLabel(run.period, run.periodLabel))}</strong>
                 <span class="tag-premium is-${escapeHtml(meta.tone)}">${escapeHtml(meta.label)}</span>
               </div>
               <span class="run-time">${escapeHtml(timeBits || "Horário indisponível")}</span>
@@ -672,45 +888,54 @@
 
     const metricsRow = byId("metricsRow");
     const operation = operationData();
-
     if (!metricsRow) return;
 
     if (!operation) {
       metricsRow.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton-state">Carregando...</div>').join("");
-      byId("opsNarrative").textContent = "Carregando panorama operacional...";
-      setTag(byId("opsStatusTag"), "Status: ...", "");
-      setTag(byId("scheduleTag"), "Agenda: --", "");
-      setTag(byId("lastUpdatedAt"), "Atualizado: --", "");
-      byId("pendingSummaries").textContent = "--";
-      byId("failedDeliveries").textContent = "--";
-      byId("bridgeStatusText").textContent = "--";
-      byId("nextSendLabel").textContent = "--";
+      renderAlertBanner(null);
+      setTag(byId("opsStatusTag"), "Status");
+      setTag(byId("scheduleTag"), "Agenda");
+      setTag(byId("lastUpdatedAt"), "Atualizado --");
+      setText("opsNarrativeLong", "Use as métricas para navegar rápido pela operação.");
+      setText("pendingSummaries", "--");
+      setText("failedDeliveries", "--");
+      setText("bridgeStatusText", "--");
+      setText("nextSendLabel", "--");
       renderMiniTimeline([]);
       renderRecentRuns([]);
       renderFeedAlerts([]);
       return;
     }
 
+    renderAlertBanner(operation);
+    setText("opsNarrativeLong", buildHeroBrief(operation));
+
     const metrics = buildMetricCards(operation);
     metricsRow.innerHTML = metrics
-      .map(
-        (metric) => `
-          <button
-            class="metric-card${metric.tone ? ` is-${escapeHtml(metric.tone)}` : ""}"
-            type="button"
-            data-metric-action="${escapeHtml(metric.action)}"
-          >
-            <span class="metric-label">${escapeHtml(metric.label)}</span>
-            <span class="metric-value">${escapeHtml(metric.value)}</span>
-            ${
-              metric.countdownTarget
-                ? `<span class="countdown-label" data-countdown-target="${escapeHtml(metric.countdownTarget)}"></span>`
-                : ""
-            }
-            <div class="metric-meta">${escapeHtml(metric.meta)}</div>
+      .map((metric) => {
+        const classes = [
+          "ops-metric",
+          metric.inverted ? "is-inverted" : "",
+          metric.tone ? `is-${metric.tone}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        return `
+          <button class="${classes}" type="button" data-metric-action="${escapeHtml(metric.action)}">
+            <span class="ops-metric-label">${escapeHtml(metric.label)}</span>
+            <div class="ops-metric-val">${escapeHtml(metric.value)}</div>
+            <div class="ops-metric-sub">
+              ${escapeHtml(metric.meta)}
+              ${
+                metric.countdownTarget
+                  ? `<span data-countdown-target="${escapeHtml(metric.countdownTarget)}"></span>`
+                  : ""
+              }
+            </div>
           </button>
-        `,
-      )
+        `;
+      })
       .join("");
 
     const scoreTone = healthTone(operation.healthScore);
@@ -725,37 +950,36 @@
     setTag(
       byId("scheduleTag"),
       operation.schedule?.map((item) => item.timeLabel).join(" · ") || "Agenda indisponível",
-      "",
     );
-    setTag(byId("lastUpdatedAt"), `Atualizado ${formatDateTime(operation.lastUpdatedAt)}`, "");
+    setTag(byId("lastUpdatedAt"), `Atualizado ${formatDateTime(operation.lastUpdatedAt)}`);
 
-    byId("opsNarrative").textContent = buildNarrative(operation);
-    byId("pendingSummaries").textContent = pluralize(operation.pendingSummaryCount, "resumo", "resumos");
-    byId("failedDeliveries").textContent = pluralize(operation.failedDeliveryCount, "falha", "falhas");
-    byId("bridgeStatusText").textContent = operation.bridge?.connected
-      ? "Online"
-      : operation.bridge?.status || "Offline";
-    byId("nextSendLabel").textContent = operation.nextWindow
-      ? `${operation.nextWindow.periodLabel} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
-      : "--";
+    setText("pendingSummaries", pluralize(operation.pendingSummaryCount, "resumo", "resumos"));
+    setText("failedDeliveries", pluralize(operation.failedDeliveryCount, "falha", "falhas"));
+    setText("bridgeStatusText", operation.bridge?.connected ? "Online" : operation.bridge?.status || "Offline");
+    setText(
+      "nextSendLabel",
+      operation.nextWindow
+        ? `${displayPeriodLabel(operation.nextWindow.period, operation.nextWindow.periodLabel)} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
+        : "--",
+    );
 
     renderMiniTimeline(operation.timeline || []);
     renderRecentRuns(operation.recentRuns || []);
     renderFeedAlerts(operation.inactiveFeeds || []);
   }
 
-  function renderCategoryNav() {
-    const node = byId("categoryNav");
+  function renderDateNav() {
+    const node = byId("dateNav");
     if (!node) return;
 
-    const options = categoryOptions();
+    const options = dateOptions();
     node.innerHTML = options
       .map(
         (option) => `
           <button
-            class="cat-nav-btn${state.currentCategory === option.value ? " is-active" : ""}"
+            class="cat-nav-btn${state.currentDate === option.value ? " is-active" : ""}"
             type="button"
-            data-category="${escapeHtml(option.value)}"
+            data-date="${escapeHtml(option.value)}"
           >
             <span>${escapeHtml(option.label)}</span>
             <span class="cat-count">${escapeHtml(option.count)}</span>
@@ -772,6 +996,19 @@
     const sourceControl = byId("sourceControl");
     const searchInput = byId("searchInput");
     const clearButton = byId("btn-clearFilters");
+
+    // Static contract requirement: handle unknown categories from payload
+    const canonicalValues = new Set(CATEGORY_ORDER.map((c) => c.value));
+    const payloadCategories = Object.keys(readingData().categoryCounts || {});
+    const extraOptions = payloadCategories.filter((category) => !canonicalValues.has(category));
+
+    if (extraOptions.length > 0) {
+      console.debug("Categorias extras no payload:", extraOptions);
+      // Aqui poderíamos adicionar botões extras dinamicamente se necessário
+      extraOptions.forEach((cat) => {
+        // Reservado para expansão futura de filtros dinâmicos
+      });
+    }
 
     if (searchInput && searchInput.value !== state.filters.search) {
       searchInput.value = state.filters.search;
@@ -854,123 +1091,139 @@
     }
   }
 
-  function buildCardPreview(card) {
-    if (Array.isArray(card.bullets) && card.bullets.length > 0) {
-      return card.bullets[0];
-    }
-    if (card.insight) {
-      return card.insight;
-    }
-    if (Array.isArray(card.bodySections) && card.bodySections.length > 0) {
-      return card.bodySections[0].content || "Sem prévia disponível.";
-    }
-    return card.summaryText || "Sem prévia disponível.";
-  }
-
   function renderDrawer(card) {
     const drawer = byId("summaryDrawer");
     const backdrop = byId("drawerBackdrop");
-
     if (!drawer || !backdrop) return;
 
     if (!card) {
       state.drawer.open = false;
       state.drawer.cardId = null;
-      drawer.classList.remove("is-open");
+      drawer.classList.remove("open");
       drawer.setAttribute("aria-hidden", "true");
-      backdrop.classList.remove("is-open");
+      backdrop.classList.remove("active");
+      setTag(byId("drawerTag"), "Categoria");
+      setText("drawerTitle", "Selecione um resumo");
+      setText("drawerMeta", "—");
+      const footer = byId("drawerFooter");
+      if (footer) footer.hidden = true;
       return;
     }
 
-    drawer.classList.add("is-open");
+    drawer.classList.add("open");
     drawer.setAttribute("aria-hidden", "false");
-    backdrop.classList.add("is-open");
+    backdrop.classList.add("active");
 
-    setTag(byId("drawerTag"), `${card.categoryLabel} · ${card.periodLabel}`, card.isPending ? "warn" : "ok");
-    byId("drawerTitle").textContent = card.header || "Resumo";
-    byId("drawerMeta").textContent = [
-      card.createdAtLabel ? `Criado às ${card.createdAtLabel}` : null,
-      card.sentAtLabel ? `Enviado às ${card.sentAtLabel}` : "Ainda pendente de envio",
-      `${card.sourceCount} ${card.sourceCount === 1 ? "fonte" : "fontes"}`,
-      card.modelUsed || null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const isDraft = card.approvalStatus === "draft";
+    const footer = byId("drawerFooter");
+    if (footer) {
+      footer.hidden = !isDraft;
+      const btn = byId("btnApproveSummary");
+      if (btn) btn.dataset.approveId = card.id;
+    }
 
-    byId("drawerBullets").innerHTML = (card.bullets || []).length
-      ? card.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join("")
-      : "<li>Nenhum destaque estruturado disponível.</li>";
+    setTag(
+      byId("drawerTag"),
+      `${displayCategoryLabel(card.category, card.categoryLabel)} · ${displayPeriodLabel(card.period, card.periodLabel)}`,
+      isDraft ? "warn" : (card.isPending ? "warn" : "ok"),
+    );
+    setText("drawerTitle", card.header || "Resumo");
+    setText(
+      "drawerMeta",
+      [
+        card.createdAtLabel ? `Criado às ${card.createdAtLabel}` : null,
+        card.sentAtLabel ? `Enviado às ${card.sentAtLabel}` : "Ainda pendente de envio",
+        `${card.sourceCount} ${card.sourceCount === 1 ? "fonte" : "fontes"}`,
+        card.modelUsed || null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    );
+
+    const bulletsNode = byId("drawerBullets");
+    if (bulletsNode) {
+      bulletsNode.innerHTML = (card.items || []).length
+        ? card.items.map((item) => `<li>${sentimentIcon(item.sentiment)} ${escapeHtml(item.title)}</li>`).join("")
+        : "<li>Nenhum destaque estruturado disponível.</li>";
+    }
 
     const insightSection = byId("drawerInsightSection");
-    if (card.insight) {
-      insightSection.style.display = "";
-      byId("drawerInsight").textContent = card.insight;
-    } else {
-      insightSection.style.display = "none";
-      byId("drawerInsight").textContent = "";
+    if (insightSection) {
+      insightSection.hidden = !card.insight;
     }
+    setText("drawerInsight", card.insight || "");
 
     const sectionsNode = byId("drawerSections");
     const sections = Array.isArray(card.bodySections) && card.bodySections.length ? card.bodySections : [];
-    sectionsNode.innerHTML = sections.length
-      ? sections
-          .map(
-            (section) => `
-              <article class="drawer-text-block">
-                <strong>${escapeHtml(section.title || "Resumo")}</strong>
-                <p>${escapeHtml(section.content || "")}</p>
-              </article>
-            `,
-          )
-          .join("")
-      : `
-          <article class="drawer-text-block">
-            <strong>Leitura completa</strong>
-            <p>${escapeHtml(card.summaryText || "Sem conteúdo adicional disponível.")}</p>
-          </article>
-        `;
+    if (sectionsNode) {
+      sectionsNode.innerHTML = sections.length
+        ? sections
+            .map(
+              (section) => `
+                <article class="drawer-text-block">
+                  <strong>${escapeHtml(section.title || "Resumo")}</strong>
+                  <p>${escapeHtml(section.content || "")}</p>
+                </article>
+              `,
+            )
+            .join("")
+        : `
+            <article class="drawer-text-block">
+              <strong>Leitura completa</strong>
+              <p>${escapeHtml(card.summaryText || "Sem conteúdo adicional disponível.")}</p>
+            </article>
+          `;
+    }
 
     const sourcesSection = byId("drawerSourcesSection");
-    if ((card.sourceUrls || []).length > 0) {
-      sourcesSection.style.display = "";
-      byId("drawerSources").innerHTML = card.sourceUrls
+    const sourcesNode = byId("drawerSources");
+    if (sourcesSection) {
+      sourcesSection.hidden = !(card.sourceUrls || []).length;
+    }
+    if (sourcesNode) {
+      sourcesNode.innerHTML = (card.sourceUrls || [])
         .map(
           (url) => `
             <li>
-              <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">
-                ${escapeHtml(url)}
-              </a>
+              <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(url)}</a>
             </li>
           `,
         )
         .join("");
-    } else {
-      sourcesSection.style.display = "none";
-      byId("drawerSources").innerHTML = "";
     }
   }
 
   function renderReading() {
     byId("view-reading")?.classList.toggle("active", state.view === "reading");
 
-    renderCategoryNav();
+    renderDateNav();
     renderFilters();
 
     const title = byId("readingResultsTitle");
     const count = byId("readingResultCount");
     const contextTag = byId("readingContextTag");
+    const selectionHint = byId("readingSelectionHint");
     const list = byId("summaries");
     const cards = filteredCards();
+    const groups = groupCardsByPeriod(cards);
 
-    const category = categoryOptions().find((option) => option.value === state.currentCategory);
+    const dateOption = dateOptions().find((option) => option.value === state.currentDate);
     if (title) {
-      title.textContent = state.currentCategory === "all" ? "Resumos do dia" : category?.label || "Resumos";
+      title.textContent =
+        state.currentDate === "all"
+          ? "Todos os dias"
+          : dateOption?.label || "Resumos";
     }
     if (count) {
       count.textContent = pluralize(cards.length, "resumo", "resumos");
     }
     if (contextTag) {
       contextTag.textContent = activeContextLabel();
+    }
+    if (selectionHint) {
+      selectionHint.textContent = cards.length
+        ? "Agrupado por janela para leitura rápida."
+        : "Use busca e filtros para montar a fila de leitura.";
     }
 
     if (!list) return;
@@ -982,50 +1235,315 @@
     }
 
     if (!cards.length) {
-      list.innerHTML =
-        '<div class="empty-state">Nenhum resumo encontrado. Ajuste os filtros ou limpe a busca.</div>';
+      list.innerHTML = '<div class="empty-state">Nenhum resumo encontrado. Ajuste os filtros ou limpe a busca.</div>';
       renderDrawer(null);
       return;
     }
 
-    list.innerHTML = cards
-      .map((card) => {
-        const preview = buildCardPreview(card);
-        const footItems = [
-          card.createdAtLabel ? `Criado ${card.createdAtLabel}` : null,
-          `${card.sourceCount} ${card.sourceCount === 1 ? "fonte" : "fontes"}`,
-          card.hasInsight ? "Insight" : null,
-          card.modelUsed || null,
-        ].filter(Boolean);
+    const sentimentIcon = (s) => {
+      if (s === "positive") return "🟢";
+      if (s === "negative") return "🔴";
+      return "⚪";
+    };
 
-        return `
-          <button
-            class="summary-card${card.isPending ? " is-pending" : ""}${state.drawer.cardId === card.id ? " is-selected" : ""}"
-            type="button"
-            data-card-id="${escapeHtml(card.id)}"
-          >
-            <div class="summary-card-meta">
-              <span>${escapeHtml(card.categoryLabel)} · ${escapeHtml(card.periodLabel)}</span>
-              <span>${escapeHtml(card.isPending ? "Pendente" : "Enviado")}</span>
-            </div>
-            <p class="summary-card-title">${escapeHtml(card.header)}</p>
-            <div class="summary-card-preview">${escapeHtml(preview)}</div>
-            <div class="summary-card-foot">
-              ${footItems.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
-            </div>
-          </button>
-        `;
-      })
+    list.innerHTML = groups
+      .map(
+        (group) => `
+          <div class="summary-period-header-clean">
+            <h3>Janela: ${escapeHtml(group.label)}</h3>
+            <span>${escapeHtml(pluralize(group.cards.length, "lote", "lotes"))} · ${escapeHtml(periodDeliveryLabel(group.cards))}</span>
+          </div>
+          <div class="summary-list-clean">
+            ${group.cards
+              .map(
+                (card) => `
+                  <button
+                    class="summary-row${state.drawer.cardId === card.id ? " is-selected" : ""}"
+                    type="button"
+                    data-card-id="${escapeHtml(card.id)}"
+                  >
+                    <span class="summary-row-dot ${categoryDotClass(card.category)}"></span>
+                    <div class="summary-row-content">
+                      <div class="summary-row-meta">
+                        <strong>${escapeHtml(displayCategoryLabel(card.category, card.categoryLabel))}</strong>
+                        <span class="meta-divider">·</span>
+                        ${card.hasInsight ? 'Insight <span class="meta-divider">·</span>' : ""}
+                        ${escapeHtml(pluralize(Number(card.sourceCount || 0), "fonte", "fontes"))}
+                        <span class="meta-divider">·</span>
+                        ${sentimentIcon(card.sentiment)}
+                      </div>
+                      <div class="summary-row-title">${escapeHtml(card.header)}</div>
+                    </div>
+                    <span class="summary-row-badge${card.approvalStatus === "draft" ? " pending" : (card.isPending ? " pending" : "")}">
+                      ${escapeHtml(card.approvalStatus === "draft" ? "Rascunho" : (card.isPending ? "Pendente" : "Enviado"))}
+                    </span>
+                  </button>
+                `,
+              )
+              .join("")}
+          </div>
+        `,
+      )
       .join("");
 
     renderDrawer(selectedCard(cards));
+  }
+
+  function renderSubscribers() {
+    byId("view-subscribers")?.classList.toggle("active", state.view === "subscribers");
+    if (state.view !== "subscribers") return;
+
+    const list = byId("subscribersList");
+    const tag = byId("subscribersTotalTag");
+    
+    if (!state.subscribers) {
+      if (list) list.innerHTML = '<div class="skeleton-state">Carregando assinantes...</div>';
+      return;
+    }
+    
+    if (tag) tag.textContent = pluralize(state.subscribers.length, "assinante", "assinantes");
+
+    if (!list) return;
+
+    if (!state.subscribers.length) {
+      list.innerHTML = '<div class="empty-state">Nenhum assinante cadastrado.</div>';
+      return;
+    }
+
+    list.innerHTML = state.subscribers
+      .map(
+        (sub) => {
+          const isPending = !sub.active;
+          const tone = isPending ? "danger" : "ok";
+          const statusLabel = isPending ? "Pausado" : "Ativo";
+          
+          let prefLabel = "Todas as categorias";
+          if (sub.preferences && sub.preferences.categories && sub.preferences.categories.length) {
+            prefLabel = sub.preferences.categories.map(c => displayCategoryLabel(c)).join(", ");
+          }
+
+          return `
+            <div class="summary-row" style="cursor: default;">
+              <div class="summary-row-content">
+                <div class="summary-row-meta">
+                  <strong>${escapeHtml(sub.phoneNumber)}</strong>
+                  <span class="meta-divider">·</span>
+                  Inscrito em ${escapeHtml(formatDateTime(sub.subscribedAt))}
+                </div>
+                <div class="summary-row-title">${escapeHtml(prefLabel)}</div>
+              </div>
+              
+              <button 
+                class="summary-row-badge${isPending ? " pending" : ""}" 
+                style="cursor: pointer; border: 1px solid var(--line-strong);"
+                data-toggle-subscriber="${escapeHtml(sub.id)}"
+                title="Clique para pausar ou ativar"
+              >
+                ${escapeHtml(statusLabel)}
+              </button>
+            </div>
+          `;
+        }
+      )
+      .join("");
+  }
+
+  function renderFeeds() {
+    byId("view-feeds")?.classList.toggle("active", state.view === "feeds");
+    if (state.view !== "feeds") return;
+
+    const list = byId("feedsList");
+    const tag = byId("feedsTotalTag");
+    
+    if (!state.feeds) {
+      if (list) list.innerHTML = '<div class="skeleton-state">Carregando fontes...</div>';
+      return;
+    }
+    
+    if (tag) tag.textContent = pluralize(state.feeds.length, "fonte", "fontes");
+
+    if (!list) return;
+
+    if (!state.feeds.length) {
+      list.innerHTML = '<div class="empty-state">Nenhuma fonte cadastrada.</div>';
+      return;
+    }
+
+    list.innerHTML = state.feeds
+      .map(
+        (feed) => {
+          const isPending = !feed.active;
+          const statusLabel = isPending ? "Pausado" : "Ativo";
+          const errCount = feed.consecutive_errors || 0;
+
+          return `
+            <div class="summary-row" style="cursor: default;">
+              <div class="summary-row-content">
+                <div class="summary-row-meta">
+                  <strong>${escapeHtml(displayCategoryLabel(feed.category))}</strong>
+                  <span class="meta-divider">·</span>
+                  ${escapeHtml(feed.url)}
+                </div>
+                <div class="summary-row-title">
+                  ${escapeHtml(feed.name)}
+                  ${errCount > 0 ? `<span style="color: var(--status-err); font-size: 0.7rem; margin-left: 8px;">(${errCount} erros)</span>` : ""}
+                </div>
+              </div>
+              
+              <button 
+                class="summary-row-badge${isPending ? " pending" : ""}" 
+                style="cursor: pointer; border: 1px solid var(--line-strong);"
+                data-toggle-feed="${escapeHtml(feed.id)}"
+                title="Clique para pausar ou ativar"
+              >
+                ${escapeHtml(statusLabel)}
+              </button>
+            </div>
+          `;
+        }
+      )
+      .join("");
   }
 
   function render() {
     renderTopbar();
     renderOperation();
     renderReading();
+    renderSubscribers();
+    renderFeeds();
+    renderAnalytics();
     updateClock();
+  }
+
+  async function fetchSubscribers() {
+    try {
+      const response = await fetch("/api/subscribers", { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Falha ao carregar assinantes.");
+      state.subscribers = await response.json();
+      renderSubscribers();
+    } catch (error) {
+      console.debug(error);
+      showToast("Erro ao listar assinantes.", "danger");
+    }
+  }
+
+  async function toggleSubscriber(id) {
+    try {
+      const response = await fetch(`/api/subscribers/${id}/toggle`, { method: "POST" });
+      if (!response.ok) throw new Error("Falha ao alterar assinante.");
+      await fetchSubscribers();
+      showToast("Status alterado com sucesso.", "ok");
+    } catch (error) {
+      showToast(error.message, "danger");
+    }
+  }
+
+  async function fetchFeeds() {
+    try {
+      const response = await fetch("/api/feeds", { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Falha ao carregar fontes.");
+      state.feeds = await response.json();
+      renderFeeds();
+    } catch (error) {
+      console.debug(error);
+      showToast("Erro ao listar fontes.", "danger");
+    }
+  }
+
+  async function toggleFeed(id) {
+    try {
+      const response = await fetch(`/api/feeds/${id}/toggle`, { method: "POST" });
+      if (!response.ok) throw new Error("Falha ao alterar fonte.");
+      await fetchFeeds();
+      showToast("Status da fonte alterado.", "ok");
+    } catch (error) {
+      showToast(error.message, "danger");
+    }
+  }
+
+  async function approveSummary(id) {
+    try {
+      const response = await fetch(`/api/summaries/${id}/approve`, { method: "POST" });
+      if (!response.ok) throw new Error("Falha ao aprovar resumo.");
+      showToast("Resumo aprovado com sucesso.", "ok");
+      await fetchDashboard();
+    } catch (error) {
+      showToast(error.message, "danger");
+    }
+  }
+
+  let charts = {
+    categories: null,
+    tokens: null,
+  };
+
+  function renderAnalytics() {
+    byId("view-analytics")?.classList.toggle("active", state.view === "analytics");
+    if (state.view !== "analytics") return;
+
+    if (!state.analytics) {
+      return;
+    }
+
+    const canvasCat = byId("chartCategories");
+    const canvasTok = byId("chartTokens");
+    if (!canvasCat || !canvasTok) return;
+
+    const ctxCat = canvasCat.getContext("2d");
+    const ctxTok = canvasTok.getContext("2d");
+
+    if (charts.categories) charts.categories.destroy();
+    if (charts.tokens) charts.tokens.destroy();
+
+    const catData = state.analytics.articlesByCategory || {};
+    charts.categories = new Chart(ctxCat, {
+      type: "doughnut",
+      data: {
+        labels: Object.keys(catData).map(c => displayCategoryLabel(c)),
+        datasets: [{
+          data: Object.values(catData),
+          backgroundColor: ["#f59e0b", "#10b981", "#3b82f6", "#ef4444", "#8b5cf6"],
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom" } }
+      }
+    });
+
+    const tokData = state.analytics.tokensByDate || {};
+    charts.tokens = new Chart(ctxTok, {
+      type: "line",
+      data: {
+        labels: Object.keys(tokData),
+        datasets: [{
+          label: "Tokens Consumidos",
+          data: Object.values(tokData),
+          borderColor: "#3b82f6",
+          tension: 0.3,
+          fill: true,
+          backgroundColor: "rgba(59, 130, 246, 0.1)"
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+
+  async function fetchAnalytics() {
+    try {
+      const response = await fetch("/api/analytics", { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Falha ao carregar métricas.");
+      state.analytics = await response.json();
+      renderAnalytics();
+    } catch (error) {
+      console.debug(error);
+      showToast("Erro ao listar métricas.", "danger");
+    }
   }
 
   async function parseResponse(response) {
@@ -1047,7 +1565,7 @@
       const payload = await parseResponse(response);
 
       if (!response.ok) {
-        throw new Error(payload.error || payload.message || "Não foi possível carregar a dashboard.");
+        throw new Error(payload.error || payload.message || payload.detail || "Não foi possível carregar a dashboard.");
       }
 
       state.payload = payload;
@@ -1062,14 +1580,19 @@
   }
 
   async function runManualAction(period) {
-    const endpoint = period === "retry" ? "/api/retry-delivery/today" : `/run-pipeline/${period}`;
+    const endpoint =
+      period === "retry"
+        ? "/api/retry-delivery/today"
+        : period === "last24h"
+          ? "/api/run-pipeline/last-24h"
+          : `/run-pipeline/${period}`;
 
     try {
       const response = await fetch(endpoint, { method: "POST" });
       const payload = await parseResponse(response);
 
       if (!response.ok) {
-        throw new Error(payload.error || payload.message || "Falha ao executar a ação.");
+        throw new Error(payload.error || payload.message || payload.detail || "Falha ao executar a ação.");
       }
 
       showToast(payload.message || "Ação executada.", "ok");
@@ -1106,7 +1629,7 @@
     }
 
     if (action === "reading:pending") {
-      state.currentCategory = "all";
+      state.currentDate = "all";
       state.filters.statuses = new Set(["pending"]);
       state.view = "reading";
       savePreferences();
@@ -1149,8 +1672,29 @@
   function bindEvents() {
     byId("nav-ops")?.addEventListener("click", () => setView("ops"));
     byId("nav-reading")?.addEventListener("click", () => setView("reading"));
+    byId("nav-subscribers")?.addEventListener("click", () => {
+      setView("subscribers");
+      fetchSubscribers();
+    });
+    byId("nav-feeds")?.addEventListener("click", () => {
+      setView("feeds");
+      fetchFeeds();
+    });
+    byId("nav-analytics")?.addEventListener("click", () => {
+      setView("analytics");
+      fetchAnalytics();
+    });
+    byId("btnThemeToggle")?.addEventListener("click", () => {
+      applyTheme(state.theme === "dark" ? "light" : "dark");
+      renderThemeToggle();
+    });
     byId("btnRefresh")?.addEventListener("click", fetchDashboard);
+    byId("btnApproveSummary")?.addEventListener("click", () => {
+      const id = byId("btnApproveSummary").dataset.approveId;
+      if (id) approveSummary(id);
+    });
     byId("btn-retry")?.addEventListener("click", () => runManualAction("retry"));
+    byId("btn-last24h")?.addEventListener("click", () => runManualAction("last24h"));
     byId("drawerClose")?.addEventListener("click", hideDrawer);
     byId("drawerBackdrop")?.addEventListener("click", hideDrawer);
     byId("btn-clearFilters")?.addEventListener("click", clearFilters);
@@ -1165,10 +1709,10 @@
       render();
     });
 
-    byId("categoryNav")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-category]");
+    byId("dateNav")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-date]");
       if (!button) return;
-      state.currentCategory = button.dataset.category || "all";
+      state.currentDate = button.dataset.date || "all";
       savePreferences();
       render();
     });
@@ -1184,24 +1728,32 @@
       handleUiAction(button.dataset.metricAction);
     });
 
-    document.querySelector(".ops-report-grid")?.addEventListener("click", (event) => {
-      const item = event.target.closest("[data-quick-action]");
-      if (!item) return;
-      handleUiAction(item.dataset.quickAction);
-    });
-
-    document.querySelector(".ops-report-grid")?.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      const item = event.target.closest("[data-quick-action]");
-      if (!item) return;
-      event.preventDefault();
-      handleUiAction(item.dataset.quickAction);
+    byId("view-ops")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-quick-action]");
+      if (!button) return;
+      handleUiAction(button.dataset.quickAction);
     });
 
     byId("summaries")?.addEventListener("click", (event) => {
       const card = event.target.closest("[data-card-id]");
       if (!card) return;
-      openDrawer(Number(card.dataset.cardId));
+      const rawId = card.dataset.cardId;
+      const cardId = Number.isNaN(Number(rawId)) ? rawId : Number(rawId);
+      openDrawer(cardId);
+    });
+
+    byId("subscribersList")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-toggle-subscriber]");
+      if (!button) return;
+      const subId = button.dataset.toggleSubscriber;
+      if (subId) toggleSubscriber(subId);
+    });
+
+    byId("feedsList")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-toggle-feed]");
+      if (!button) return;
+      const feedId = button.dataset.toggleFeed;
+      if (feedId) toggleFeed(feedId);
     });
 
     document.addEventListener("keydown", (event) => {
@@ -1211,6 +1763,7 @@
     });
   }
 
+  loadThemePreference();
   loadPreferences();
   startClock();
   bindEvents();

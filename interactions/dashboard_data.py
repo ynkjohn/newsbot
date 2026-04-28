@@ -185,9 +185,11 @@ async def build_dashboard_payload(session: AsyncSession, bridge_status: dict) ->
         select(func.count(Subscriber.id)).where(Subscriber.active.is_(True))
     ) or 0
 
+    reading_since = today - timedelta(days=6)
+
     summaries_result = await session.execute(
         select(Summary)
-        .where(Summary.date == today)
+        .where(Summary.date >= reading_since)
         .order_by(Summary.created_at.desc())
     )
     summaries = summaries_result.scalars().all()

@@ -53,6 +53,8 @@ class NewsArticle(Base):
         Integer, ForeignKey("summaries.id"), nullable=True
     )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    trust_status: Mapped[str] = mapped_column(String(20), default="trusted")
+    trust_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     source: Mapped["FeedSource"] = relationship(back_populates="articles")
     summary: Mapped[Optional["Summary"]] = relationship(back_populates="articles")

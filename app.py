@@ -2,7 +2,6 @@ import asyncio
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
-from uuid import uuid4
 
 import httpx
 import structlog
@@ -179,25 +178,10 @@ async def trigger_pipeline(period: str):
             content={"error": "period must be 'morning', 'midday', 'afternoon' or 'evening'"},
         )
 
-    run_id = uuid4().hex[:12]
-    logger.info(f"Manual pipeline run requested: period={period} run_id={run_id}")
-    task = asyncio.create_task(pipeline_map[period]())
-
-    def log_pipeline_result(done_task: asyncio.Task, requested_period: str = period, requested_run_id: str = run_id) -> None:
-        try:
-            done_task.result()
-        except Exception as exc:
-            logger.error(
-                f"Manual pipeline run failed: period={requested_period} run_id={requested_run_id} error={type(exc).__name__}: {exc}"
-            )
-        else:
-            logger.info(f"Manual pipeline run finished: period={requested_period} run_id={requested_run_id}")
-
-    task.add_done_callback(log_pipeline_result)
+    asyncio.create_task(pipeline_map[period]())
     return {
         "status": "started",
         "period": period,
-        "run_id": run_id,
         "message": "Pipeline iniciado. Acompanhe a execução nos logs do serviço newsbot.",
     }
 
@@ -240,6 +224,141 @@ async def retry_today_delivery():
         "summaryCount": len(summaries),
         "periods": sorted(summaries_by_period.keys()),
     }
+
+
+@app.get("/api/subscribers", dependencies=[Depends(require_admin)])
+async def list_subscribers():
+    from sqlalchemy import select
+
+    from db.models import Subscriber
+
+    async with async_session() as session:
+        result = await session.execute(select(Subscriber).order_by(Subscriber.subscribed_at.desc()))
+        subscribers = result.scalars().all()
+
+    return [
+        {
+            "id": sub.id,
+            "phoneNumber": sub.phone_number,
+            "name": sub.name,
+            "active": sub.active,
+            "preferences": sub.preferences or {},
+            "subscribedAt": sub.subscribed_at.isoformat() if sub.subscribed_at else None,
+            "lastSentAt": sub.last_sent_at.isoformat() if sub.last_sent_at else None,
+        }
+        for sub in subscribers
+    ]
+
+
+@app.post("/api/subscribers/{subscriber_id}/toggle", dependencies=[Depends(require_admin)])
+async def toggle_subscriber(subscriber_id: int):
+    from sqlalchemy import select
+
+    from db.models import Subscriber
+
+    async with async_session() as session:
+        result = await session.execute(select(Subscriber).where(Subscriber.id == subscriber_id))
+        subscriber = result.scalar_one_or_none()
+        if not subscriber:
+            return JSONResponse(status_code=404, content={"error": "Assinante não encontrado."})
+        subscriber.active = not subscriber.active
+        await session.commit()
+        return {"id": subscriber.id, "active": subscriber.active}
+
+
+@app.get("/api/feeds", dependencies=[Depends(require_admin)])
+async def list_feeds():
+    from sqlalchemy import select
+
+    from db.models import FeedSource
+
+    async with async_session() as session:
+        result = await session.execute(select(FeedSource).order_by(FeedSource.name.asc()))
+        feeds = result.scalars().all()
+
+    return [
+        {
+            "id": feed.id,
+            "name": feed.name,
+            "url": feed.url,
+            "category": feed.category,
+            "active": feed.active,
+            "consecutive_errors": feed.consecutive_errors,
+            "lastError": (feed.last_error or "")[:140],
+        }
+        for feed in feeds
+    ]
+
+
+@app.post("/api/feeds/{feed_id}/toggle", dependencies=[Depends(require_admin)])
+async def toggle_feed(feed_id: int):
+    from sqlalchemy import select
+
+    from db.models import FeedSource
+
+    async with async_session() as session:
+        result = await session.execute(select(FeedSource).where(FeedSource.id == feed_id))
+        feed = result.scalar_one_or_none()
+        if not feed:
+            return JSONResponse(status_code=404, content={"error": "Fonte não encontrada."})
+        feed.active = not feed.active
+        await session.commit()
+        return {"id": feed.id, "active": feed.active}
+
+
+@app.get("/api/analytics", dependencies=[Depends(require_admin)])
+async def analytics_data():
+    from datetime import timedelta
+
+    from sqlalchemy import func, select
+
+    from db.models import NewsArticle, Summary
+
+    today = local_today()
+    since = today - timedelta(days=6)
+
+    async with async_session() as session:
+        articles_result = await session.execute(
+            select(NewsArticle.category, func.count(NewsArticle.id))
+            .where(NewsArticle.fetched_at >= since.isoformat())
+            .group_by(NewsArticle.category)
+        )
+        articles_by_category = {row[0]: row[1] for row in articles_result.all()}
+
+        tokens_result = await session.execute(
+            select(Summary.date, func.sum(Summary.token_count))
+            .where(Summary.date >= since)
+            .group_by(Summary.date)
+            .order_by(Summary.date.asc())
+        )
+        tokens_by_date = {
+            row[0].strftime("%d/%m") if row[0] else "?": row[1] or 0
+            for row in tokens_result.all()
+        }
+
+    return {
+        "articlesByCategory": articles_by_category,
+        "tokensByDate": tokens_by_date,
+    }
+
+
+@app.post("/api/summaries/{summary_id}/approve", dependencies=[Depends(require_admin)])
+async def approve_summary(summary_id: int):
+    from sqlalchemy import select
+
+    from db.models import Summary
+
+    async with async_session() as session:
+        result = await session.execute(select(Summary).where(Summary.id == summary_id))
+        summary = result.scalar_one_or_none()
+        if not summary:
+            return JSONResponse(status_code=404, content={"error": "Resumo não encontrado."})
+        kt = summary.key_takeaways or {}
+        if isinstance(kt, dict) and kt.get("approval_status") == "draft":
+            kt["approval_status"] = "approved"
+            summary.key_takeaways = kt
+            await session.commit()
+        return {"id": summary.id, "status": "approved"}
 
 
 @app.post("/webhook/whatsapp")
