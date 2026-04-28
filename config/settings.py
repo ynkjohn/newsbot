@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # WhatsApp Bridge
     whatsapp_bridge_url: str = "http://whatsapp-bridge:3000"
-    whatsapp_bridge_token: str = ""  # Required for webhook authentication
+    whatsapp_bridge_token: str = "newsbot-local-bridge-token"  # Required for bridge/webhook authentication
     whatsapp_number: str = ""
 
     # Database

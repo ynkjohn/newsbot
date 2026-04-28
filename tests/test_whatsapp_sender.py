@@ -1,9 +1,8 @@
 """Tests for WhatsApp sender with retry logic."""
-import requests
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
-from requests.exceptions import ConnectionError, Timeout
 
 from delivery.whatsapp_sender import _send_whatsapp_message, send_digest
 from db.models import Subscriber, Summary
@@ -32,131 +31,157 @@ def mock_summary():
     return summary
 
 
-def test_whatsapp_send_success():
+class MockAsyncClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def post(self, url, *, json, headers):
+        self.calls.append((url, json, headers))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class MockResponse:
+    def __init__(self, payload=None, status_code=200):
+        self.payload = payload or {"success": True}
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                "HTTP error",
+                request=httpx.Request("POST", "http://bridge/send"),
+                response=httpx.Response(self.status_code),
+            )
+
+    def json(self):
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_send_success(monkeypatch):
     """Test successful WhatsApp message send."""
-    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"success": True}
-        mock_post.return_value = mock_response
+    from config.settings import settings
 
-        result = _send_whatsapp_message("551234567890", "Hello")
+    client = MockAsyncClient([MockResponse()])
+    monkeypatch.setattr(settings, "whatsapp_bridge_url", "http://localhost:3000")
+    monkeypatch.setattr(settings, "whatsapp_bridge_token", "")
 
-        assert result == {"success": True}
-        mock_post.assert_called_once()
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client):
+        result = await _send_whatsapp_message("551234567890", "Hello")
+
+    assert result == {"success": True}
+    assert client.calls == [
+        (
+            "http://localhost:3000/send",
+            {"number": "551234567890@s.whatsapp.net", "text": "Hello"},
+            {},
+        )
+    ]
 
 
-def test_whatsapp_send_includes_bearer_when_configured(monkeypatch):
+@pytest.mark.asyncio
+async def test_whatsapp_send_includes_bearer_when_configured(monkeypatch):
     """Bridge /send receives Authorization when token is set."""
     from config.settings import settings
 
+    client = MockAsyncClient([MockResponse()])
     monkeypatch.setattr(settings, "whatsapp_bridge_token", "secret-bridge-token")
-    with patch("delivery.whatsapp_sender.requests.post") as mock_post:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"success": True}
-        mock_post.return_value = mock_response
 
-        _send_whatsapp_message("551234567890", "Hello")
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client):
+        await _send_whatsapp_message("551234567890", "Hello")
 
-        _, kwargs = mock_post.call_args
-        assert kwargs["headers"]["Authorization"] == "Bearer secret-bridge-token"
+    assert client.calls[0][2]["Authorization"] == "Bearer secret-bridge-token"
 
 
-@patch('delivery.whatsapp_sender.time.sleep')
-def test_whatsapp_send_timeout_retry(mock_sleep):
+@pytest.mark.asyncio
+async def test_whatsapp_send_timeout_retry():
     """Test that timeout triggers retry attempts with correct backoff."""
-    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        # First 2 calls timeout, 3rd succeeds
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"success": True}
-        
-        mock_post.side_effect = [
-            Timeout("Connection timeout"),
-            Timeout("Connection timeout"),
-            mock_response
-        ]
-        
-        result = _send_whatsapp_message("551234567890", "Hello")
-        
-        # Should succeed on 3rd attempt
-        assert result == {"success": True}
-        assert mock_post.call_count == 3
-        # Should have slept for 1s and 5s
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_any_call(1)
-        mock_sleep.assert_any_call(5)
+    client = MockAsyncClient([
+        httpx.TimeoutException("Connection timeout"),
+        httpx.TimeoutException("Connection timeout"),
+        MockResponse(),
+    ])
+
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client), \
+         patch("delivery.whatsapp_sender.asyncio.sleep", AsyncMock()) as mock_sleep:
+        result = await _send_whatsapp_message("551234567890", "Hello")
+
+    assert result == {"success": True}
+    assert len(client.calls) == 3
+    assert mock_sleep.await_count == 2
+    mock_sleep.assert_any_await(1)
+    mock_sleep.assert_any_await(5)
 
 
-@patch('delivery.whatsapp_sender.time.sleep')
-def test_whatsapp_send_connection_error_retry(mock_sleep):
+@pytest.mark.asyncio
+async def test_whatsapp_send_connection_error_retry():
     """Test that connection error triggers retry."""
-    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"success": True}
-        
-        mock_post.side_effect = [
-            ConnectionError("Failed to connect"),
-            mock_response
-        ]
-        
-        result = _send_whatsapp_message("551234567890", "Hello")
-        
-        assert result == {"success": True}
-        assert mock_post.call_count == 2
-        mock_sleep.assert_called_once_with(1)
+    client = MockAsyncClient([
+        httpx.ConnectError("Failed to connect"),
+        MockResponse(),
+    ])
+
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client), \
+         patch("delivery.whatsapp_sender.asyncio.sleep", AsyncMock()) as mock_sleep:
+        result = await _send_whatsapp_message("551234567890", "Hello")
+
+    assert result == {"success": True}
+    assert len(client.calls) == 2
+    mock_sleep.assert_awaited_once_with(1)
 
 
-def test_whatsapp_send_4xx_no_retry():
+@pytest.mark.asyncio
+async def test_whatsapp_send_4xx_no_retry():
     """Test that 4xx errors don't trigger retry."""
-    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_post.return_value = mock_response
-        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock_response)
-        
-        result = _send_whatsapp_message("551234567890", "Hello")
-        
-        # Should return None immediately, no retries
-        assert result is None
-        # Should be called only once
-        assert mock_post.call_count == 1
+    client = MockAsyncClient([MockResponse(status_code=400)])
+
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client):
+        result = await _send_whatsapp_message("551234567890", "Hello")
+
+    assert result is None
+    assert len(client.calls) == 1
 
 
-@patch('delivery.whatsapp_sender.time.sleep')
-def test_whatsapp_send_5xx_retry(mock_sleep):
-    """Test that 5xx errors trigger retry and backoff."""
-    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        # First call is 500, second succeeds
-        error_response = MagicMock()
-        error_response.status_code = 500
-        error_response.raise_for_status.side_effect = requests.exceptions.HTTPError(response=error_response)
-        
-        success_response = MagicMock()
-        success_response.json.return_value = {"success": True}
-        
-        mock_post.side_effect = [
-            error_response,
-            success_response
-        ]
-        
-        result = _send_whatsapp_message("551234567890", "Hello")
-        
-        # Should retry and eventually succeed
-        assert result == {"success": True}
-        assert mock_post.call_count == 2
-        mock_sleep.assert_called_once_with(1)
+@pytest.mark.asyncio
+async def test_whatsapp_send_5xx_no_retry():
+    """Test that HTTP status errors return None without retry."""
+    client = MockAsyncClient([MockResponse(status_code=500)])
+
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client), \
+         patch("delivery.whatsapp_sender.asyncio.sleep", AsyncMock()) as mock_sleep:
+        result = await _send_whatsapp_message("551234567890", "Hello")
+
+    assert result is None
+    assert len(client.calls) == 1
+    mock_sleep.assert_not_awaited()
 
 
-@patch('delivery.whatsapp_sender.time.sleep')
-def test_whatsapp_send_max_retries_reached(mock_sleep):
+@pytest.mark.asyncio
+async def test_whatsapp_send_max_retries_reached():
     """Test that reaching max retries returns None."""
-    with patch('delivery.whatsapp_sender.requests.post') as mock_post:
-        mock_post.side_effect = Timeout("Timeout")
-        
-        result = _send_whatsapp_message("551234567890", "Hello")
-        
-        assert result is None
-        assert mock_post.call_count == 3
-        assert mock_sleep.call_count == 2
+    client = MockAsyncClient([
+        httpx.TimeoutException("Timeout"),
+        httpx.TimeoutException("Timeout"),
+        httpx.TimeoutException("Timeout"),
+    ])
+
+    with patch("delivery.whatsapp_sender.httpx.AsyncClient", return_value=client), \
+         patch("delivery.whatsapp_sender.asyncio.sleep", AsyncMock()) as mock_sleep:
+        result = await _send_whatsapp_message("551234567890", "Hello")
+
+    assert result is None
+    assert len(client.calls) == 3
+    assert mock_sleep.await_count == 2
 
 
 @pytest.mark.asyncio

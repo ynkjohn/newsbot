@@ -1,11 +1,8 @@
 import asyncio
 import datetime
-import platform
 import subprocess
 import sys
 from pathlib import Path
-
-platform.machine = lambda: "AMD64"
 
 import pytest
 from config.settings import Settings
@@ -14,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import interactions.command_router as command_router
-from config import time_utils
 from db.models import Base, DeliveryLog, Subscriber, Summary
 
 
@@ -51,6 +47,12 @@ def test_pipeline_hours_list_rejects_invalid_values(value, message):
 
     with pytest.raises(ValueError, match=message):
         settings.pipeline_hours_list
+
+
+def test_whatsapp_bridge_token_has_local_default():
+    settings = Settings(_env_file=None)
+
+    assert settings.whatsapp_bridge_token == "newsbot-local-bridge-token"
 
 
 @pytest.mark.asyncio

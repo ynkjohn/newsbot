@@ -1,11 +1,14 @@
 """Test configuration and fixtures."""
 import asyncio
-
-import pytest
+import platform
 from unittest.mock import AsyncMock
 
-from config.settings import settings
-from config.time_utils import reset_timezone_cache
+import pytest
+
+platform.machine = lambda: "AMD64"
+
+from config.settings import settings  # noqa: E402
+from config.time_utils import reset_timezone_cache  # noqa: E402
 
 
 @pytest.fixture(scope="session")
