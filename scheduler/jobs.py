@@ -10,7 +10,7 @@ from collector.dedup import deduplicate_articles
 from collector.rss_fetcher import compute_content_hash, fetch_all_feeds
 from config.time_utils import local_today, utc_now
 from db.engine import async_session
-from db.models import NewsArticle, PipelineRun, Subscriber
+from db.models import NewsArticle, PipelineEvent, PipelineRun, Subscriber
 from delivery.whatsapp_sender import send_digest
 from processor.summarizer import generate_all_summaries
 
@@ -26,13 +26,13 @@ TIMEOUT_SUMMARIZE_PER_CATEGORY = 75
 MAX_CONCURRENT_EXTRACTIONS = 5
 
 
-async def run_pipeline(period: str) -> None:
+async def run_pipeline(period: str, request_id: str | None = None) -> None:
     """Run the full news collection, processing, and delivery pipeline."""
     async with _pipeline_lock:
-        await _run_pipeline_impl(period)
+        await _run_pipeline_impl(period, request_id=request_id)
 
 
-async def _run_pipeline_impl(period: str) -> None:
+async def _run_pipeline_impl(period: str, request_id: str | None = None) -> None:
     """Internal implementation of the pipeline (always called within the lock).
     
     Features:
@@ -41,17 +41,45 @@ async def _run_pipeline_impl(period: str) -> None:
     - Detailed error logging indicating which step failed
     """
     run = await _create_pipeline_run(period)
+    event_metadata = {"requestId": request_id} if request_id else {}
+    await _record_pipeline_event(
+        run.id,
+        "pipeline",
+        "started",
+        f"Pipeline {period} iniciado",
+        event_metadata,
+    )
 
     try:
         # STEP 1: Collect news with timeout
         logger.info(f"Starting {period} pipeline - collecting news (timeout: {TIMEOUT_FETCH_FEEDS}s)")
+        await _record_pipeline_event(
+            run.id,
+            "fetch_feeds",
+            "started",
+            "Coleta de feeds iniciada",
+            {"timeoutSeconds": TIMEOUT_FETCH_FEEDS},
+        )
         try:
             entries = await asyncio.wait_for(
                 fetch_all_feeds(hours=12),
                 timeout=TIMEOUT_FETCH_FEEDS
             )
+            await _record_pipeline_event(
+                run.id,
+                "fetch_feeds",
+                "ok",
+                "Coleta de feeds finalizada",
+                {"entries": len(entries)},
+            )
         except asyncio.TimeoutError:
             logger.error(f"STEP 1 TIMEOUT: fetch_all_feeds took longer than {TIMEOUT_FETCH_FEEDS}s")
+            await _record_pipeline_event(
+                run.id,
+                "fetch_feeds",
+                "failed",
+                f"Timeout in feed collection (>{TIMEOUT_FETCH_FEEDS}s)",
+            )
             await _update_pipeline_run(
                 run.id, "failed",
                 error_log=f"Timeout in feed collection (>{TIMEOUT_FETCH_FEEDS}s)"
@@ -63,6 +91,12 @@ async def _run_pipeline_impl(period: str) -> None:
                 f"STEP 1 ERROR: Failed to collect feeds: "
                 f"{type(e).__name__}: {e}"
             )
+            await _record_pipeline_event(
+                run.id,
+                "fetch_feeds",
+                "failed",
+                f"Feed collection error: {type(e).__name__}",
+            )
             await _update_pipeline_run(
                 run.id, "failed",
                 error_log=f"Feed collection error: {type(e).__name__}"
@@ -71,22 +105,45 @@ async def _run_pipeline_impl(period: str) -> None:
 
         if not entries:
             logger.warning(f"No articles collected in {period} pipeline")
+            await _record_pipeline_event(run.id, "pipeline", "ok", "Nenhuma notícia coletada")
             await _update_pipeline_run(run.id, "completed", articles_collected=0)
             return
 
         # STEP 2: Deduplicate
+        await _record_pipeline_event(
+            run.id,
+            "deduplicate",
+            "started",
+            "Deduplicação iniciada",
+            {"entries": len(entries)},
+        )
         try:
             new_entries = await deduplicate_articles(entries)
             logger.info(f"Collected {len(entries)} articles, {len(new_entries)} are new")
+            await _record_pipeline_event(
+                run.id,
+                "deduplicate",
+                "ok",
+                "Deduplicação finalizada",
+                {"entries": len(entries), "newEntries": len(new_entries)},
+            )
         except Exception as e:
             logger.error(
                 f"STEP 2 ERROR: Deduplication failed: "
                 f"{type(e).__name__}: {e}"
             )
+            await _record_pipeline_event(run.id, "deduplicate", "failed", f"Dedup error: {type(e).__name__}")
             await _update_pipeline_run(run.id, "failed", error_log=f"Dedup error: {type(e).__name__}")
             return
 
         # STEP 3: Extract full content and save articles with per-article timeout
+        await _record_pipeline_event(
+            run.id,
+            "extract_articles",
+            "started",
+            "Extração de conteúdo iniciada",
+            {"newEntries": len(new_entries), "maxConcurrent": MAX_CONCURRENT_EXTRACTIONS},
+        )
         extraction_semaphore = asyncio.Semaphore(MAX_CONCURRENT_EXTRACTIONS)
         extraction_results = await asyncio.gather(
             *[
@@ -105,10 +162,18 @@ async def _run_pipeline_impl(period: str) -> None:
         else:
             logger.info(f"Saved {len(articles)} articles with content")
             
+        await _record_pipeline_event(
+            run.id,
+            "extract_articles",
+            "ok",
+            "Extração de conteúdo finalizada",
+            {"articles": len(articles), "errors": extraction_errors},
+        )
         await _update_pipeline_run(run.id, "running", articles_collected=len(articles))
 
         if not articles:
             logger.warning("No articles with content to process")
+            await _record_pipeline_event(run.id, "pipeline", "ok", "Nenhum artigo com conteúdo para processar")
             await _update_pipeline_run(run.id, "completed")
             return
 
@@ -122,15 +187,35 @@ async def _run_pipeline_impl(period: str) -> None:
             f"Generating summaries for {len(articles)} articles "
             f"(timeout: {summarize_timeout}s)"
         )
+        await _record_pipeline_event(
+            run.id,
+            "summarize",
+            "started",
+            "Geração de resumos iniciada",
+            {"articles": len(articles), "categories": len(categories_present), "timeoutSeconds": summarize_timeout},
+        )
         try:
             summaries = await asyncio.wait_for(
                 generate_all_summaries(articles, period),
                 timeout=summarize_timeout
             )
             logger.info(f"Generated {len(summaries)} summaries")
+            await _record_pipeline_event(
+                run.id,
+                "summarize",
+                "ok",
+                "Geração de resumos finalizada",
+                {"summaries": len(summaries)},
+            )
         except asyncio.TimeoutError:
             logger.error(
                 f"STEP 4 TIMEOUT: LLM summarization took longer than {summarize_timeout}s"
+            )
+            await _record_pipeline_event(
+                run.id,
+                "summarize",
+                "failed",
+                f"Timeout in summarization (>{summarize_timeout}s)",
             )
             await _update_pipeline_run(
                 run.id, "failed",
@@ -141,6 +226,7 @@ async def _run_pipeline_impl(period: str) -> None:
         except ValueError as e:
             # LLM returned invalid JSON after retries
             logger.error(f"STEP 4 ERROR: LLM JSON parsing failed: {e}")
+            await _record_pipeline_event(run.id, "summarize", "failed", "LLM JSON parsing error")
             await _update_pipeline_run(run.id, "failed", error_log="LLM JSON parsing error")
             return
         except Exception as e:
@@ -148,6 +234,7 @@ async def _run_pipeline_impl(period: str) -> None:
                 f"STEP 4 ERROR: Summarization failed: "
                 f"{type(e).__name__}: {e}"
             )
+            await _record_pipeline_event(run.id, "summarize", "failed", f"Summarization error: {type(e).__name__}")
             await _update_pipeline_run(run.id, "failed", error_log=f"Summarization error: {type(e).__name__}")
             return
 
@@ -155,10 +242,12 @@ async def _run_pipeline_impl(period: str) -> None:
 
         if not summaries:
             logger.warning("No summaries generated")
+            await _record_pipeline_event(run.id, "pipeline", "ok", "Nenhum resumo gerado")
             await _update_pipeline_run(run.id, "completed")
             return
 
         # STEP 5: Deliver to subscribers
+        await _record_pipeline_event(run.id, "delivery", "started", "Entrega iniciada")
         try:
             async with async_session() as session:
                 result = await session.execute(
@@ -178,20 +267,31 @@ async def _run_pipeline_impl(period: str) -> None:
         try:
             sent_count = await send_digest(subscribers, summaries, period)
             logger.info(f"Sent {sent_count} messages to {len(subscribers)} subscribers")
+            await _record_pipeline_event(
+                run.id,
+                "delivery",
+                "ok",
+                "Entrega finalizada",
+                {"subscribers": len(subscribers), "messagesSent": sent_count},
+            )
+            await _record_pipeline_event(run.id, "pipeline", "ok", f"Pipeline {period} concluído")
             await _update_pipeline_run(run.id, "completed", messages_sent=sent_count)
         except Exception as e:
             logger.error(
                 f"STEP 5 ERROR: Delivery failed: {type(e).__name__}: {e}"
             )
+            await _record_pipeline_event(run.id, "delivery", "failed", f"Delivery error: {type(e).__name__}")
             await _update_pipeline_run(run.id, "failed", error_log=f"Delivery error: {type(e).__name__}")
             await _alert_admin(f"Pipeline {period}: STEP 5 ERROR (delivery failed)")
 
     except asyncio.CancelledError:
         logger.warning(f"{period} pipeline was cancelled")
+        await _record_pipeline_event(run.id, "pipeline", "failed", "Pipeline cancelled")
         await _update_pipeline_run(run.id, "failed", error_log="Pipeline cancelled")
     except Exception as e:
         # Catch-all for unexpected errors
         logger.exception(f"{period} pipeline failed with unexpected error")
+        await _record_pipeline_event(run.id, "pipeline", "failed", f"Unexpected: {type(e).__name__}")
         await _update_pipeline_run(run.id, "failed", error_log=f"Unexpected: {type(e).__name__}")
         await _alert_admin(f"Pipeline {period} unexpected error: {type(e).__name__}: {e}")
 
@@ -199,20 +299,20 @@ async def _run_pipeline_impl(period: str) -> None:
         await _finish_pipeline_run(run.id)
 
 
-async def run_morning_pipeline() -> None:
-    await run_pipeline("morning")
+async def run_morning_pipeline(request_id: str | None = None) -> None:
+    await run_pipeline("morning", request_id=request_id)
 
 
-async def run_midday_pipeline() -> None:
-    await run_pipeline("midday")
+async def run_midday_pipeline(request_id: str | None = None) -> None:
+    await run_pipeline("midday", request_id=request_id)
 
 
-async def run_afternoon_pipeline() -> None:
-    await run_pipeline("afternoon")
+async def run_afternoon_pipeline(request_id: str | None = None) -> None:
+    await run_pipeline("afternoon", request_id=request_id)
 
 
-async def run_evening_pipeline() -> None:
-    await run_pipeline("evening")
+async def run_evening_pipeline(request_id: str | None = None) -> None:
+    await run_pipeline("evening", request_id=request_id)
 
 
 async def cleanup_old_articles(days: int = 7) -> None:
@@ -262,6 +362,26 @@ async def _create_pipeline_run(period: str) -> PipelineRun:
         await session.commit()
         await session.refresh(run)
         return run
+
+
+async def _record_pipeline_event(
+    run_id: int,
+    step: str,
+    status: str,
+    message: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    async with async_session() as session:
+        session.add(
+            PipelineEvent(
+                run_id=run_id,
+                step=step,
+                status=status,
+                message=message,
+                event_metadata=metadata or {},
+            )
+        )
+        await session.commit()
 
 
 async def _update_pipeline_run(

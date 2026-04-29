@@ -953,6 +953,45 @@ a {
   line-height: 1.35;
 }
 
+.run-events {
+  display: grid;
+  gap: 5px;
+  padding-top: 2px;
+}
+
+.run-event {
+  border-left: 2px solid var(--line-strong);
+  padding-left: 8px;
+}
+
+.run-event.is-ok {
+  border-left-color: var(--status-ok);
+}
+
+.run-event.is-failed,
+.run-event.is-cancelled {
+  border-left-color: var(--status-err);
+}
+
+.run-event.is-started {
+  border-left-color: var(--status-warn);
+}
+
+.run-event span {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.67rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.run-event p {
+  margin: 2px 0 0;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
 .feed-item p {
   margin: 6px 0 0;
   color: var(--status-err);

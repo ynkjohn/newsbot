@@ -148,6 +148,24 @@ class PipelineRun(Base):
     started_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
     finished_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
+    events: Mapped[list["PipelineEvent"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class PipelineEvent(Base):
+    __tablename__ = "pipeline_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, ForeignKey("pipeline_runs.id"), nullable=False)
+    step: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    event_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+    run: Mapped["PipelineRun"] = relationship(back_populates="events")
+
 
 VALID_CATEGORIES = [
     "politica-brasil",

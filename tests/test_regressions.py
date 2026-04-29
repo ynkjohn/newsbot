@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import interactions.command_router as command_router
-from db.models import Base, DeliveryLog, Subscriber, Summary
+from db.models import Base, DeliveryLog, FeedSource, PipelineEvent, PipelineRun, Subscriber, Summary
 
 
 async def _create_sessionmaker(db_path: Path) -> tuple:
@@ -30,6 +30,46 @@ def test_pipeline_hours_list_accepts_four_valid_hours():
     settings = Settings(pipeline_hours="7,12,17,21")
 
     assert settings.pipeline_hours_list == [7, 12, 17, 21]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_event_records_step_status_and_metadata(tmp_path):
+    from interactions.dashboard_data import build_dashboard_payload
+
+    engine, session_factory = await _create_sessionmaker(tmp_path / "pipeline-events.sqlite")
+    try:
+        async with session_factory() as session:
+            run = PipelineRun(
+                period="morning",
+                date=datetime.date.today(),
+                status="running",
+                started_at=datetime.datetime.now(datetime.UTC),
+            )
+            session.add(run)
+            await session.flush()
+            session.add(
+                PipelineEvent(
+                    run_id=run.id,
+                    step="fetch_feeds",
+                    status="ok",
+                    message="Coleta finalizada",
+                    event_metadata={"entries": 12},
+                )
+            )
+            await session.commit()
+
+            event = await session.scalar(select(PipelineEvent).where(PipelineEvent.run_id == run.id))
+            payload = await build_dashboard_payload(session, {"status": "connected", "connected": True})
+    finally:
+        await engine.dispose()
+
+    assert event is not None
+    assert event.step == "fetch_feeds"
+    assert event.status == "ok"
+    assert event.message == "Coleta finalizada"
+    assert event.event_metadata == {"entries": 12}
+    assert payload["operation"]["recentRuns"][0]["events"][0]["step"] == "fetch_feeds"
+    assert payload["operation"]["recentRuns"][0]["events"][0]["metadata"] == {"entries": 12}
 
 
 @pytest.mark.parametrize(
@@ -140,7 +180,7 @@ async def test_send_whatsapp_message_returns_none_after_retries(monkeypatch):
 async def test_manual_pipeline_returns_traceable_run_id(monkeypatch):
     from app import app
 
-    async def fake_pipeline():
+    async def fake_pipeline(request_id=None):
         return None
 
     created_tasks = []
@@ -170,8 +210,144 @@ async def test_manual_pipeline_returns_traceable_run_id(monkeypatch):
     assert isinstance(payload["run_id"], str)
     assert len(payload["run_id"]) >= 8
     assert len(created_tasks) == 1
+    assert created_tasks[0].cr_frame.f_locals["request_id"] == payload["run_id"]
 
     created_tasks[0].close()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_failed_delivery_drilldown(tmp_path):
+    from interactions.dashboard_data import build_dashboard_payload
+
+    engine, session_factory = await _create_sessionmaker(tmp_path / "failed-deliveries.sqlite")
+    try:
+        async with session_factory() as session:
+            subscriber = Subscriber(phone_number="5511999999999", active=True)
+            summary = Summary(
+                category="tech",
+                period="evening",
+                date=datetime.date.today(),
+                summary_text="Resumo",
+                key_takeaways={},
+                source_article_ids=[],
+                model_used="test",
+            )
+            session.add_all([subscriber, summary])
+            await session.flush()
+            session.add(
+                DeliveryLog(
+                    subscriber_id=subscriber.id,
+                    summary_id=summary.id,
+                    status="failed",
+                    error_message="bridge timeout",
+                )
+            )
+            await session.commit()
+
+            payload = await build_dashboard_payload(session, {"status": "connected", "connected": True})
+    finally:
+        await engine.dispose()
+
+    failed = payload["operation"]["failedDeliveries"]
+
+    assert failed["count"] == 1
+    assert failed["items"][0]["subscriber"] == "5511999999999"
+    assert failed["items"][0]["summaryId"] == summary.id
+    assert failed["items"][0]["errorMessage"] == "bridge timeout"
+    assert failed["items"][0]["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_dashboard_feed_health_marks_degraded_and_paused(tmp_path):
+    from interactions.dashboard_data import build_dashboard_payload
+
+    engine, session_factory = await _create_sessionmaker(tmp_path / "feed-health.sqlite")
+    try:
+        now = datetime.datetime.now(datetime.UTC)
+        async with session_factory() as session:
+            session.add_all([
+                FeedSource(
+                    url="https://example.com/ok.xml",
+                    name="OK",
+                    category="tech",
+                    active=True,
+                    consecutive_errors=0,
+                    last_fetched_at=now,
+                ),
+                FeedSource(
+                    url="https://example.com/degraded.xml",
+                    name="Degraded",
+                    category="tech",
+                    active=True,
+                    consecutive_errors=2,
+                    last_error="Timeout",
+                    last_fetched_at=now - datetime.timedelta(hours=3),
+                ),
+                FeedSource(
+                    url="https://example.com/paused.xml",
+                    name="Paused",
+                    category="tech",
+                    active=False,
+                    consecutive_errors=0,
+                ),
+            ])
+            await session.commit()
+
+            payload = await build_dashboard_payload(session, {"status": "connected", "connected": True})
+    finally:
+        await engine.dispose()
+
+    states = {feed["name"]: feed["state"] for feed in payload["operation"]["feedHealth"]}
+
+    assert states["OK"] == "healthy"
+    assert states["Degraded"] == "degraded"
+    assert states["Paused"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_today_summary_count_counts_only_today(tmp_path):
+    from interactions.dashboard_data import build_dashboard_payload
+
+    engine, session_factory = await _create_sessionmaker(tmp_path / "dashboard.sqlite")
+    try:
+        today = datetime.date.today()
+        yesterday = today - datetime.timedelta(days=1)
+
+        async with session_factory() as session:
+            session.add_all([
+                Summary(
+                    category="tech",
+                    period="morning",
+                    date=today,
+                    summary_text="Hoje",
+                    key_takeaways={},
+                    source_article_ids=[],
+                    model_used="test",
+                    sent_at=datetime.datetime.now(datetime.UTC),
+                ),
+                Summary(
+                    category="tech",
+                    period="morning",
+                    date=yesterday,
+                    summary_text="Ontem",
+                    key_takeaways={},
+                    source_article_ids=[],
+                    model_used="test",
+                    sent_at=datetime.datetime.now(datetime.UTC),
+                ),
+            ])
+            await session.commit()
+
+            payload = await build_dashboard_payload(session, {"status": "connected", "connected": True})
+    finally:
+        await engine.dispose()
+
+    assert payload["operation"]["todaySummaryCount"] == 1
+    assert payload["operation"]["readingWindowSummaryCount"] == 2
+    assert payload["operation"]["healthBreakdown"][-1] == {
+        "label": "Sem penalidades operacionais",
+        "impact": 0,
+    }
 
 
 def test_parse_message_preserves_unknown_news_command():

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from collector.sources import seed_feeds_if_empty
 from config.settings import settings
-from config.time_utils import local_today
+from config.time_utils import local_today, local_now
 from db.engine import async_session, init_db
 from interactions.admin_auth import require_admin
 from interactions.dashboard_data import build_dashboard_payload
@@ -165,6 +165,43 @@ async def whatsapp_status():
     return await fetch_whatsapp_status()
 
 
+@app.get("/api/digest-preview/{period}", dependencies=[Depends(require_admin)])
+async def digest_preview(period: str):
+    from sqlalchemy import select
+
+    from db.models import Summary
+    from delivery.message_formatter import format_digest, split_message
+
+    valid_periods = {"morning", "midday", "afternoon", "evening"}
+    if period not in valid_periods:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "period must be 'morning', 'midday', 'afternoon' or 'evening'"},
+        )
+
+    today = local_today()
+    async with async_session() as session:
+        result = await session.execute(
+            select(Summary)
+            .where(Summary.date == today, Summary.period == period)
+            .order_by(Summary.category.asc(), Summary.created_at.asc())
+        )
+        summaries = result.scalars().all()
+
+    preview_text = format_digest(summaries, today, period)
+    parts = split_message(preview_text)
+    return {
+        "period": period,
+        "date": today.isoformat(),
+        "generatedAt": local_now().isoformat(),
+        "summaryCount": len(summaries),
+        "charCount": len(preview_text),
+        "partCount": len(parts),
+        "text": preview_text,
+        "parts": parts,
+    }
+
+
 @app.post("/run-pipeline/{period}", dependencies=[Depends(require_admin)])
 async def trigger_pipeline(period: str):
     pipeline_map = {
@@ -181,7 +218,7 @@ async def trigger_pipeline(period: str):
 
     run_id = uuid4().hex[:12]
     logger.info(f"Manual pipeline run requested: period={period} run_id={run_id}")
-    task = asyncio.create_task(pipeline_map[period]())
+    task = asyncio.create_task(pipeline_map[period](request_id=run_id))
 
     def log_pipeline_result(done_task: asyncio.Task, requested_period: str = period, requested_run_id: str = run_id) -> None:
         try:

@@ -1,5 +1,6 @@
 """Tests for webhook validation and admin-protected endpoints."""
 import base64
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -146,6 +147,123 @@ def test_dashboard_page_serves_intelligence_ui():
     assert 'src="/static/dashboard-extra.js' in response.text
 
 
+def test_digest_preview_uses_delivery_formatter(monkeypatch):
+    from datetime import date, datetime, timezone
+
+    from db.models import Summary
+
+    summary = Summary(
+        id=456,
+        category="tech",
+        period="morning",
+        date=date.today(),
+        summary_text="Resumo Tech",
+        key_takeaways={
+            "items": [
+                {
+                    "title": "IA acelera análise de mercado",
+                    "summary": "Ferramentas novas reduzem tempo de pesquisa.",
+                    "trust_status": "trusted",
+                    "importance_score": 4,
+                }
+            ]
+        },
+        source_article_ids=[],
+        model_used="test-model",
+        created_at=datetime.now(timezone.utc),
+        sent_at=None,
+    )
+
+    class DummyResult:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return [summary]
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return DummyResult()
+
+    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
+
+    response = client.get("/api/digest-preview/morning", headers=_get_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["period"] == "morning"
+    assert payload["summaryCount"] == 1
+    assert payload["partCount"] == len(payload["parts"])
+    assert payload["text"].startswith("NewsBot — Manhã")
+    assert "IA acelera análise de mercado" in payload["text"]
+
+
+def test_digest_preview_rejects_invalid_period():
+    response = client.get("/api/digest-preview/dawn", headers=_get_admin_headers())
+
+    assert response.status_code == 400
+
+
+def test_dashboard_buttons_expose_digest_preview_action():
+    response = client.get("/dashboard", headers=_get_admin_headers())
+
+    assert response.status_code == 200
+    html = response.text
+    assert 'id="btn-last24h" type="button"' in html
+    assert "prévia fiel da mensagem" in html.lower()
+
+
+
+def test_dashboard_script_renders_pipeline_events():
+    script = Path("static/dashboard-extra.js").read_text(encoding="utf-8")
+
+    assert "function renderPipelineEvents(events)" in script
+    assert "Eventos recentes do pipeline" in script
+    assert "${renderPipelineEvents(run.events)}" in script
+
+
+
+def test_dashboard_payload_exposes_summary_contract():
+    from datetime import date, datetime, timezone
+
+    from db.models import Summary
+    from interactions.dashboard_data import _summary_card
+
+    summary = Summary(
+        id=123,
+        category="geopolitica",
+        period="morning",
+        date=date(2026, 4, 29),
+        summary_text="Resumo",
+        key_takeaways={
+            "approval_status": "draft",
+            "sentiment": "mixed",
+            "risk_level": "elevated",
+            "items": [
+                {"title": "Item relevante", "sentiment": "mixed"},
+            ],
+        },
+        source_article_ids=[],
+        model_used="test-model",
+        created_at=datetime(2026, 4, 29, 8, 0, tzinfo=timezone.utc),
+        sent_at=None,
+    )
+
+    card = _summary_card(summary, {})
+
+    assert card["approvalStatus"] == "draft"
+    assert card["items"] == [{"title": "Item relevante", "sentiment": "mixed"}]
+    assert card["sentiment"] == "mixed"
+    assert card["riskLevel"] == "elevated"
+
+
+
 def test_dashboard_accepts_list_key_takeaways(monkeypatch):
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
@@ -281,10 +399,14 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
             if self.execute_calls == 1:
                 return DummyResult(items=[summary])
             if self.execute_calls == 2:
-                return DummyResult(items=[])
+                return DummyResult(rows=[])
             if self.execute_calls == 3:
-                return DummyResult(items=[run])
+                return DummyResult(items=[])
             if self.execute_calls == 4:
+                return DummyResult(items=[run])
+            if self.execute_calls == 5:
+                return DummyResult(items=[])
+            if self.execute_calls == 6:
                 return DummyResult(items=[run])
             return DummyResult(rows=[(7, "https://example.com/a"), (9, "https://example.com/b")])
 
@@ -306,10 +428,20 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
     assert payload["operation"]["recentRuns"][0]["messagesSent"] == 2
 
 
-def test_manual_pipeline_trigger():
+def test_manual_pipeline_trigger(monkeypatch):
+    captured = {}
+
+    async def fake_pipeline(request_id=None):
+        captured["request_id"] = request_id
+
+    monkeypatch.setattr(app_module, "run_morning_pipeline", fake_pipeline)
+
     response = client.post("/run-pipeline/morning", headers=_get_admin_headers())
     assert response.status_code == 200
-    assert response.json()["status"] == "started"
+    payload = response.json()
+    assert payload["status"] == "started"
+    assert payload["run_id"]
+    assert captured["request_id"] == payload["run_id"]
 
 
 def test_manual_pipeline_invalid_period():

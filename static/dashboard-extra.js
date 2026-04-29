@@ -125,6 +125,13 @@
     return `${value} ${value === 1 ? singular : plural}`;
   }
 
+  function sentimentIcon(sentiment) {
+    if (sentiment === "positive") return "▲";
+    if (sentiment === "negative") return "▼";
+    if (sentiment === "mixed") return "◆";
+    return "•";
+  }
+
   function titleCaseWords(value) {
     return String(value || "")
       .split(" ")
@@ -818,6 +825,28 @@
       .join("");
   }
 
+  function renderPipelineEvents(events) {
+    const recentEvents = Array.isArray(events) ? events.slice(-4) : [];
+    if (!recentEvents.length) return "";
+
+    return `
+      <div class="run-events" aria-label="Eventos recentes do pipeline">
+        ${recentEvents
+          .map((event) => {
+            const requestId = event.metadata?.requestId ? ` · ${event.metadata.requestId}` : "";
+            const label = [event.createdAtLabel, event.step, event.status].filter(Boolean).join(" · ");
+            return `
+              <div class="run-event is-${escapeHtml(event.status || "pending")}">
+                <span>${escapeHtml(label || "Evento")}${escapeHtml(requestId)}</span>
+                <p>${escapeHtml(event.message || "Sem mensagem")}</p>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
   function renderRecentRuns(runs) {
     const node = byId("recentRuns");
     if (!node) return;
@@ -855,6 +884,7 @@
               }
             </div>
             <div class="run-metrics">${escapeHtml(runMetrics)}</div>
+            ${renderPipelineEvents(run.events)}
           </article>
         `;
       })
@@ -865,18 +895,50 @@
     const node = byId("feedAlerts");
     if (!node) return;
 
-    if (!feeds.length) {
+    const attentionFeeds = feeds.filter((feed) => feed.state && feed.state !== "healthy");
+    if (!attentionFeeds.length) {
       node.innerHTML = '<div class="empty-state">Nenhum feed em atenção no momento.</div>';
       return;
     }
 
-    node.innerHTML = feeds
-      .map(
-        (feed) => `
+    node.innerHTML = attentionFeeds
+      .map((feed) => {
+        const stateLabel = {
+          paused: "Pausado",
+          broken: "Quebrado",
+          degraded: "Instável",
+          stale: "Sem atualização",
+        }[feed.state] || feed.state;
+        const detail = feed.lastError || `${feed.minutesSinceFetch ?? 0} min desde a última coleta`;
+        return `
           <article class="feed-item">
             <strong>${escapeHtml(feed.name)}</strong>
-            <span>${escapeHtml(feed.category || "Categoria não informada")}</span>
-            <p>${escapeHtml(feed.lastError || "Fonte inativa sem detalhe adicional registrado.")}</p>
+            <span>${escapeHtml(feed.category || "Categoria não informada")} · ${escapeHtml(stateLabel)} · ${escapeHtml(feed.healthScore)}%</span>
+            <p>${escapeHtml(detail)}</p>
+          </article>
+        `;
+      })
+      .join("");
+  }
+
+  function renderFailedDeliveryItems(failedDeliveries) {
+    const items = Array.isArray(failedDeliveries?.items) ? failedDeliveries.items : [];
+    if (!items.length) return "";
+
+    return items
+      .slice(0, 3)
+      .map(
+        (item) => `
+          <article class="run-item">
+            <div>
+              <div class="run-title-row">
+                <strong>${escapeHtml(item.subscriber || "Assinante")}</strong>
+                <span class="tag-premium is-danger">Falha</span>
+              </div>
+              <span class="run-time">${escapeHtml(item.summaryHeader || `${item.category || "Resumo"} — ${item.period || "janela"}`)}</span>
+              <span class="run-time">${escapeHtml(item.errorMessage || "Erro não informado")}</span>
+            </div>
+            <div class="run-metrics">${escapeHtml(formatDateTime(item.sentAt))}</div>
           </article>
         `,
       )
@@ -965,7 +1027,12 @@
 
     renderMiniTimeline(operation.timeline || []);
     renderRecentRuns(operation.recentRuns || []);
-    renderFeedAlerts(operation.inactiveFeeds || []);
+    renderFeedAlerts(operation.feedHealth || []);
+    const failedHtml = renderFailedDeliveryItems(operation.failedDeliveries);
+    if (failedHtml) {
+      const recentRuns = byId("recentRuns");
+      if (recentRuns) recentRuns.insertAdjacentHTML("afterbegin", failedHtml);
+    }
   }
 
   function renderDateNav() {
@@ -1239,12 +1306,6 @@
       renderDrawer(null);
       return;
     }
-
-    const sentimentIcon = (s) => {
-      if (s === "positive") return "🟢";
-      if (s === "negative") return "🔴";
-      return "⚪";
-    };
 
     list.innerHTML = groups
       .map(
@@ -1580,12 +1641,21 @@
   }
 
   async function runManualAction(period) {
-    const endpoint =
-      period === "retry"
-        ? "/api/retry-delivery/today"
-        : period === "last24h"
-          ? "/api/run-pipeline/last-24h"
-          : `/run-pipeline/${period}`;
+    if (period === "last24h") {
+      try {
+        const response = await fetch("/api/digest-preview/morning");
+        const payload = await parseResponse(response);
+        if (!response.ok) {
+          throw new Error(payload.error || payload.detail || "Falha ao gerar prévia.");
+        }
+        showToast(`Prévia WhatsApp: ${payload.summaryCount} resumos, ${payload.partCount} parte(s), ${payload.charCount} caracteres.`, "ok");
+      } catch (error) {
+        showToast(error.message || "Falha ao gerar prévia.", "danger");
+      }
+      return;
+    }
+
+    const endpoint = period === "retry" ? "/api/retry-delivery/today" : `/run-pipeline/${period}`;
 
     try {
       const response = await fetch(endpoint, { method: "POST" });
@@ -1595,7 +1665,8 @@
         throw new Error(payload.error || payload.message || payload.detail || "Falha ao executar a ação.");
       }
 
-      showToast(payload.message || "Ação executada.", "ok");
+      const requestLabel = payload.run_id ? ` · ${payload.run_id}` : "";
+      showToast(`${payload.message || "Ação executada."}${requestLabel}`, "ok");
       window.setTimeout(fetchDashboard, 900);
     } catch (error) {
       showToast(error.message || "Falha ao executar a ação.", "danger");
