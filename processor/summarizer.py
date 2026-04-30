@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import structlog
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -23,6 +24,141 @@ from processor.summary_format import (
 logger = structlog.get_logger()
 
 MAX_ARTICLES_PER_CATEGORY = 12
+MAX_ARTICLES_PER_EVENT = 2
+
+CATEGORY_POSITIVE_TERMS = {
+    "politica-brasil": {
+        "alcolumbre",
+        "bolsonaro",
+        "camara",
+        "câmara",
+        "congresso",
+        "deputado",
+        "deputados",
+        "dosimetria",
+        "governo",
+        "haddad",
+        "lula",
+        "messias",
+        "ministro",
+        "motta",
+        "pec",
+        "pf",
+        "pl ",
+        "politica",
+        "política",
+        "senado",
+        "senador",
+        "stf",
+        "tarcisio",
+        "tarcísio",
+        "tse",
+        "veto",
+    },
+    "economia-brasil": {
+        "banco central",
+        "bc ",
+        "combustiveis",
+        "combustíveis",
+        "cooperativas",
+        "dolar",
+        "dólar",
+        "energia",
+        "fiis",
+        "fundos",
+        "ibovespa",
+        "imposto",
+        "juros",
+        "mercosul",
+        "petrobras",
+        "petroleo",
+        "petróleo",
+        "selic",
+        "tarifas",
+        "vale",
+    },
+}
+
+CATEGORY_NEGATIVE_TERMS = {
+    "politica-brasil": {
+        "ator",
+        "atriz",
+        "celebridades",
+        "cinema",
+        "corpo",
+        "diabo veste prada",
+        "dor no corpo",
+        "emagrecimento",
+        "entretenimento",
+        "esportes",
+        "fãs",
+        "fezes",
+        "filme",
+        "futebol",
+        "matar rivais",
+        "neymar",
+        "palmeiras",
+        "proteina",
+        "proteína",
+        "saude",
+        "saúde",
+        "santos",
+        "signos",
+    },
+    "economia-brasil": {
+        "cultivo",
+        "dicas",
+        "poda",
+    },
+}
+
+SOURCE_PRIORITY = {
+    "Agencia Brasil Politica": 4,
+    "G1 Política": 5,
+    "Congresso em Foco": 4,
+    "Camara dos Deputados Politica": 4,
+    "Repórter Brasil": 3,
+    "Metropoles": 1,
+    "Agencia Brasil Economia": 4,
+    "G1 Economia": 5,
+    "Camara dos Deputados Economia": 4,
+    "InfoMoney": 4,
+    "Suno": 3,
+    "Investing.com Brasil": 1,
+}
+
+CATEGORY_EVENT_TERMS = {
+    "politica-brasil": {
+        "dosimetria": {"dosimetria"},
+        "messias-stf": {"messias"},
+        "desoneracao": {"desoneração", "desoneracao"},
+    },
+}
+
+ARTICLE_TOKEN_STOPWORDS = {
+    "ainda",
+    "apos",
+    "após",
+    "como",
+    "com",
+    "contra",
+    "da",
+    "das",
+    "de",
+    "do",
+    "dos",
+    "em",
+    "entre",
+    "esta",
+    "está",
+    "para",
+    "pela",
+    "pelo",
+    "que",
+    "sobre",
+    "uma",
+    "veja",
+}
 
 
 class SummarySection(BaseModel):
@@ -157,6 +293,20 @@ class SummaryOutput(BaseModel):
             bullets.append(text)
         return bullets
 
+    @field_validator("bullets", mode="before")
+    @classmethod
+    def limit_bullets(cls, value: object) -> object:
+        if isinstance(value, list):
+            return value[:5]
+        return value
+
+    @field_validator("sections", mode="before")
+    @classmethod
+    def limit_sections(cls, value: object) -> object:
+        if isinstance(value, list):
+            return value[:4]
+        return value
+
     @field_validator("insight")
     @classmethod
     def validate_insight(cls, value: str) -> str:
@@ -200,6 +350,132 @@ def _attach_llm_usage(summary: Summary, usage: LLMUsage | None) -> None:
         return
     summary.token_count = usage.total_tokens
     setattr(summary, "_llm_usage", usage.to_metadata())
+
+
+def _article_text(article: NewsArticle) -> str:
+    return " ".join(
+        [
+            str(getattr(article, "title", "") or ""),
+            str(getattr(article, "url", "") or ""),
+        ]
+    ).lower()
+
+
+def _article_title(article: NewsArticle) -> str:
+    return str(getattr(article, "title", "") or "").lower()
+
+
+def _source_name(article: NewsArticle) -> str:
+    source = getattr(article, "source", None)
+    return str(getattr(source, "name", "") or "")
+
+
+def _article_relevance_score(article: NewsArticle, category: str) -> int:
+    text = _article_text(article)
+    source_score = SOURCE_PRIORITY.get(_source_name(article), 0)
+    positive_terms = CATEGORY_POSITIVE_TERMS.get(category, set())
+    negative_terms = CATEGORY_NEGATIVE_TERMS.get(category, set())
+    positive_score = sum(3 for term in positive_terms if term in text)
+    negative_score = sum(8 for term in negative_terms if term in text)
+    return source_score + positive_score - negative_score
+
+
+def _article_has_category_signal(article: NewsArticle, category: str) -> bool:
+    text = _article_text(article)
+    source_score = SOURCE_PRIORITY.get(_source_name(article), 0)
+    positive_terms = CATEGORY_POSITIVE_TERMS.get(category, set())
+    return source_score >= 3 or any(term in text for term in positive_terms)
+
+
+def _article_event_key(article: NewsArticle, category: str) -> str | None:
+    text = _article_text(article)
+    for event_key, terms in CATEGORY_EVENT_TERMS.get(category, {}).items():
+        if any(term in text for term in terms):
+            return event_key
+    return None
+
+
+def _article_topic_tokens(article: NewsArticle) -> set[str]:
+    tokens = set(re.findall(r"[a-z0-9áàâãéêíóôõúç]+", _article_title(article)))
+    return {
+        token
+        for token in tokens
+        if len(token) >= 4 and token not in ARTICLE_TOKEN_STOPWORDS
+    }
+
+
+def _articles_are_similar(left: NewsArticle, right: NewsArticle) -> bool:
+    left_tokens = _article_topic_tokens(left)
+    right_tokens = _article_topic_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+
+    overlap = len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
+    return overlap >= 0.4
+
+
+def _diversify_scored_articles(
+    scored: list[tuple[int, NewsArticle]],
+    category: str,
+) -> list[tuple[int, NewsArticle]]:
+    selected: list[tuple[int, NewsArticle]] = []
+    deferred: list[tuple[int, NewsArticle]] = []
+    event_counts: dict[str, int] = {}
+
+    for score, article in scored:
+        event_key = _article_event_key(article, category)
+        repeated_event = bool(
+            event_key and event_counts.get(event_key, 0) >= MAX_ARTICLES_PER_EVENT
+        )
+        similar_articles = sum(
+            1 for _selected_score, selected_article in selected
+            if _articles_are_similar(article, selected_article)
+        )
+        if repeated_event or similar_articles >= MAX_ARTICLES_PER_EVENT:
+            deferred.append((score, article))
+            continue
+
+        selected.append((score, article))
+        if event_key:
+            event_counts[event_key] = event_counts.get(event_key, 0) + 1
+        if len(selected) >= MAX_ARTICLES_PER_CATEGORY:
+            return selected
+
+    for item in deferred:
+        if len(selected) >= MAX_ARTICLES_PER_CATEGORY:
+            break
+        selected.append(item)
+    return selected
+
+
+def _select_articles_for_summary(
+    category_articles: list[NewsArticle],
+    category: str,
+) -> list[NewsArticle]:
+    scored = [
+        (_article_relevance_score(article, category), article)
+        for article in category_articles
+    ]
+
+    if category in CATEGORY_POSITIVE_TERMS:
+        relevant = [
+            (score, article)
+            for score, article in scored
+            if score > 0 and _article_has_category_signal(article, category)
+        ]
+        if relevant:
+            scored = relevant
+
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            getattr(item[1], "published_at", None) or utc_now(),
+            getattr(item[1], "id", 0) or 0,
+        ),
+        reverse=True,
+    )
+    diversified = _diversify_scored_articles(scored, category)
+    return [article for _score, article in diversified[:MAX_ARTICLES_PER_CATEGORY]]
 
 
 async def generate_summaries_for_category(
@@ -382,11 +658,7 @@ async def generate_all_summaries(
         if not category_articles:
             continue
 
-        trimmed_articles = sorted(
-            category_articles,
-            key=lambda article: article.published_at,
-            reverse=True,
-        )[:MAX_ARTICLES_PER_CATEGORY]
+        trimmed_articles = _select_articles_for_summary(category_articles, category)
         model_name = model_pool[model_index % len(model_pool)]
         model_index += 1
         tasks.append(asyncio.create_task(run_category(category, trimmed_articles, model_name)))

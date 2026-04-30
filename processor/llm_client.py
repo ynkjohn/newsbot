@@ -63,6 +63,10 @@ class LLMTextResponse:
     usage: LLMUsage | None = None
 
 
+class LLMEmptyResponseError(RuntimeError):
+    """Raised when the provider returns no user-visible assistant content."""
+
+
 def _direct_openai_model_name(model: str) -> str:
     return model.removeprefix("openai/")
 
@@ -135,6 +139,12 @@ def _estimate_usage_cost_usd(
         + (cache_miss_tokens / 1_000_000) * pricing["input_cache_miss"]
         + (completion_tokens / 1_000_000) * pricing["output"]
     )
+
+
+def _chat_completion_extra_body(provider: str, model: str) -> dict[str, Any] | None:
+    if provider == "deepseek" and model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+        return {"thinking": {"type": "disabled"}}
+    return None
 
 
 def _usage_from_response(response: Any, provider: str, model: str) -> LLMUsage | None:
@@ -260,23 +270,41 @@ class LLMClient:
         for attempt in range(1, max_retries + 1):
             try:
                 logger.debug(f"LLM call attempt {attempt}/{max_retries} with {model}")
+                request_kwargs: dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.3,
+                }
+                extra_body = _chat_completion_extra_body(provider, model)
+                if extra_body:
+                    request_kwargs["extra_body"] = extra_body
                 
                 # Use asyncio.wait_for to ensure timeout (matching client timeout)
                 response = await asyncio.wait_for(
                     asyncio.to_thread(
                         client.chat.completions.create,
-                        model=model,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=0.3,
+                        **request_kwargs,
                     ),
                     timeout=150.0,  # Allow up to 150s for detailed summaries
                 )
                 usage = _usage_from_response(response, provider, model)
                 if usage:
                     logger.info("LLM usage", **usage.to_metadata())
+                message = response.choices[0].message if getattr(response, "choices", None) else None
+                content = getattr(message, "content", None) or ""
+                if not content.strip():
+                    logger.warning(
+                        "LLM returned empty assistant content",
+                        provider=provider,
+                        model=model,
+                        has_reasoning_content=bool(getattr(message, "reasoning_content", None)),
+                    )
+                    raise LLMEmptyResponseError(
+                        f"{provider}/{model} returned empty assistant content"
+                    )
                 return LLMTextResponse(
-                    content=response.choices[0].message.content or "",
+                    content=content,
                     usage=usage,
                 )
                 

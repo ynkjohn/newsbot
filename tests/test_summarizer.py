@@ -6,7 +6,11 @@ import pytest
 
 from db.models import NewsArticle, Summary
 from processor.llm_client import LLMUsage
-from processor.summarizer import SummaryOutput, generate_summaries_for_category
+from processor.summarizer import (
+    SummaryOutput,
+    _select_articles_for_summary,
+    generate_summaries_for_category,
+)
 
 
 @pytest.fixture
@@ -136,12 +140,94 @@ def test_summary_output_clamps_importance_score_to_allowed_range(mock_summary_ou
     assert parsed.items[0].importance_score == 5
 
 
+def test_summary_output_trims_extra_bullets(mock_summary_output):
+    payload = mock_summary_output.model_dump()
+    payload["bullets"] = [
+        "Primeiro bullet com tamanho suficiente para passar na validação.",
+        "Segundo bullet com tamanho suficiente para passar na validação.",
+        "Terceiro bullet com tamanho suficiente para passar na validação.",
+        "Quarto bullet com tamanho suficiente para passar na validação.",
+        "Quinto bullet com tamanho suficiente para passar na validação.",
+        "Sexto bullet excedente que deve ser removido antes da validação.",
+    ]
+
+    parsed = SummaryOutput(**payload)
+
+    assert len(parsed.bullets) == 5
+    assert parsed.bullets[-1].startswith("Quinto")
+
+
 def test_summary_output_rejects_numeric_position_command_hint(mock_summary_output):
     payload = mock_summary_output.model_dump()
     payload["items"][0]["command_hint"] = "!1"
 
     with pytest.raises(ValueError):
         SummaryOutput(**payload)
+
+
+def test_select_articles_for_summary_prefers_relevant_politics_over_recent_noise():
+    def article(article_id, title, source_name, published_at):
+        item = MagicMock(spec=NewsArticle)
+        item.id = article_id
+        item.title = title
+        item.url = f"https://example.com/{article_id}"
+        item.published_at = published_at
+        item.source = MagicMock()
+        item.source.name = source_name
+        return item
+
+    newest_noise = article(
+        1,
+        "Restaurante famoso abre nova unidade em Brasília",
+        "Metropoles",
+        datetime.datetime(2026, 4, 30, 19, 30),
+    )
+    older_relevant = article(
+        2,
+        "STF decide que desoneração precisa prever impacto",
+        "G1 Política",
+        datetime.datetime(2026, 4, 30, 18, 50),
+    )
+    selected = _select_articles_for_summary(
+        [newest_noise, older_relevant],
+        "politica-brasil",
+    )
+
+    assert selected[0] is older_relevant
+    assert newest_noise not in selected
+
+
+def test_select_articles_for_summary_diversifies_duplicate_politics_events():
+    def article(article_id, title, published_at):
+        item = MagicMock(spec=NewsArticle)
+        item.id = article_id
+        item.title = title
+        item.url = f"https://example.com/{article_id}"
+        item.published_at = published_at
+        item.source = MagicMock()
+        item.source.name = "G1 Política"
+        return item
+
+    duplicates = [
+        article(
+            article_id,
+            f"PL da Dosimetria tem nova votação no Congresso {article_id}",
+            datetime.datetime(2026, 4, 30, 19, article_id % 60),
+        )
+        for article_id in range(20, 35)
+    ]
+    older_distinct = article(
+        2,
+        "STF decide que desoneração precisa prever impacto",
+        datetime.datetime(2026, 4, 30, 18, 50),
+    )
+
+    selected = _select_articles_for_summary(
+        [*duplicates, older_distinct],
+        "politica-brasil",
+    )
+
+    assert older_distinct in selected
 
 
 @pytest.mark.asyncio

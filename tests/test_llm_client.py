@@ -142,6 +142,28 @@ async def test_llm_fallback_on_primary_failure(llm_client):
 
 
 @pytest.mark.asyncio
+async def test_llm_fallback_on_empty_primary_content(llm_client):
+    llm_client._primary = MagicMock()
+    llm_client._fallback = MagicMock()
+
+    primary_response = MagicMock()
+    primary_response.choices = [MagicMock()]
+    primary_response.choices[0].message.content = ""
+    primary_response.choices[0].message.reasoning_content = "internal reasoning without final answer"
+    llm_client._primary.chat.completions.create = MagicMock(return_value=primary_response)
+
+    fallback_response = MagicMock()
+    fallback_response.choices = [MagicMock()]
+    fallback_response.choices[0].message.content = "Fallback after empty primary"
+    llm_client._fallback.chat.completions.create = MagicMock(return_value=fallback_response)
+
+    result = await llm_client.chat_async("system", "user")
+
+    assert result == "Fallback after empty primary"
+    llm_client._fallback.chat.completions.create.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_llm_chat_async_with_usage_estimates_deepseek_cost(monkeypatch):
     monkeypatch.setattr(
         "processor.llm_client.get_active_llm_config",
@@ -170,6 +192,9 @@ async def test_llm_chat_async_with_usage_estimates_deepseek_cost(monkeypatch):
     result = await client.chat_async_with_usage("system", "user")
 
     assert result.content == "ok"
+    assert client._primary.chat.completions.create.call_args.kwargs["extra_body"] == {
+        "thinking": {"type": "disabled"}
+    }
     assert result.usage is not None
     assert result.usage.total_tokens == 1500
     assert result.usage.prompt_cache_hit_tokens == 200

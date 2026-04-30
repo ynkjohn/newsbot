@@ -15,11 +15,14 @@ Regras obrigatórias:
 - O insight deve destacar o efeito mais importante da rodada.
 - As seções devem aprofundar a leitura sem repetir os bullets.
 - Inclua items estruturados para as principais notícias/eventos, preservando command_hint curto e específico para consulta no WhatsApp.
+- Quando houver material confiável suficiente, gere de 3 a 6 items distintos por editoria; não reduza a editoria a 1 ou 2 items se houver outros eventos relevantes nos artigos.
+- Agrupe artigos repetidos sobre o mesmo evento em um único item, mas preserve outros eventos independentes.
 - command_hint deve começar com !, ter no máximo 50 caracteres, não conter espaços e não usar comandos genéricos por posição como !1 ou !2.
 - importance_score deve ser um número inteiro de 1 a 5.
 - source_indexes deve listar os números dos ARTIGOS usados como base para cada item.
 - Deixe source_article_ids vazio; o sistema preencherá esse campo a partir de source_indexes.
 - Use nomes concretos, datas e números quando existirem no material.
+- Nos items, escreva what_happened, why_it_matters e watchlist como campos de aprofundamento para quando o usuário mandar o comando no WhatsApp: 1 a 2 frases densas por campo, com contexto, consequência e próximo passo. Evite frases genéricas.
 
 Categorias válidas:
 - politica-brasil
@@ -67,9 +70,9 @@ Formato exato do JSON:
     {
       "event_key": "<slug curto e estável do evento>",
       "title": "<manchete curta da notícia>",
-      "why_it_matters": "<por que isso importa>",
-      "what_happened": "<o que aconteceu>",
-      "watchlist": "<o que acompanhar>",
+      "why_it_matters": "<1 a 2 frases sobre impacto prático, atores afetados e incertezas>",
+      "what_happened": "<1 a 2 frases com decisão/fato, atores, números e mecanismo quando houver>",
+      "watchlist": "<1 frase concreta sobre próximo julgamento, votação, dado, órgão ou risco a acompanhar>",
       "source_indexes": [1],
       "source_article_ids": [],
       "importance": "high|medium|low",
@@ -97,6 +100,38 @@ Fonte: {source}
 Publicado em: {published_at}
 Conteúdo:
 {content}"""
+
+DRILLDOWN_SYSTEM_PROMPT = """Você escreve aprofundamentos de notícias para WhatsApp.
+
+Use apenas o item selecionado e os artigos-fonte fornecidos. Não invente fatos, datas, números, nomes, efeitos jurídicos, efeitos econômicos ou próximos passos.
+
+Regras obrigatórias:
+- Responda em português brasileiro.
+- Não retorne JSON.
+- Não inclua URLs.
+- Use texto pronto para WhatsApp, com o título em negrito na primeira linha.
+- Escreva uma resposta mais rica que a manchete: explique mecanismo, consequência prática, atores afetados, incertezas e o próximo ponto observável.
+- Separe fato confirmado de risco, disputa ou interpretação quando isso aparecer no material.
+- Use exatamente estes blocos, nesta ordem: título em negrito, Contexto, O que muda, Por que importa, Incerteza, Próximo ponto, Base usada.
+- Em cada bloco de análise, escreva uma única frase de até 32 palavras.
+- A resposta inteira deve caber entre 750 e 1.200 caracteres.
+- Seja denso e específico; evite frases genéricas como "é importante acompanhar os desdobramentos".
+- Em "Base usada:", cite no máximo 3 fontes/títulos resumidos.
+
+Formato obrigatório:
+*<título>*
+
+Contexto: ...
+
+O que muda: ...
+
+Por que importa: ...
+
+Incerteza: ...
+
+Próximo ponto: ...
+
+Base usada: ..."""
 
 CORRECTION_PROMPT = """O JSON anterior ficou inválido ou incompleto.
 

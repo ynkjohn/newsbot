@@ -35,6 +35,20 @@ def test_parse_group_command_without_question():
     assert parse_message("!politica", is_group=True) == ("command", "!politica")
 
 
+def test_parse_group_command_after_numeric_mention():
+    assert parse_message(
+        "@229373315686421 !pl-dosimetria",
+        is_group=True,
+    ) == ("command", "!pl-dosimetria")
+
+
+def test_parse_group_command_after_lid_mention():
+    assert parse_message(
+        "@229373315686421@lid !crise-petroleo-ormuz",
+        is_group=True,
+    ) == ("command", "!crise-petroleo-ormuz")
+
+
 @pytest.mark.parametrize(
     "text",
     [

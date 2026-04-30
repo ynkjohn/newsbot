@@ -26,6 +26,11 @@ def parse_message(message: str, is_group: bool = False) -> tuple[str, str | None
     if not text:
         return ("other", None)
 
+    if is_group:
+        text = _strip_group_mentions(text)
+        if not text:
+            return ("other", None)
+
     if text.startswith("!"):
         command = text.split()[0]
         return ("command", command)
@@ -48,6 +53,15 @@ def _normalized(text: str) -> str:
     ascii_text = unicodedata.normalize("NFKD", text or "")
     ascii_text = "".join(char for char in ascii_text if not unicodedata.combining(char))
     return ascii_text.lower().strip()
+
+
+def _strip_group_mentions(text: str) -> str:
+    cleaned = re.sub(
+        r"@\d+(?::\d+)?(?:@(lid|s\.whatsapp\.net))?\b",
+        " ",
+        text or "",
+    )
+    return re.sub(r"\s+", " ", cleaned).strip(" ,:-")
 
 
 def _is_greeting(text: str) -> bool:

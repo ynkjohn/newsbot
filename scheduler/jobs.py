@@ -12,13 +12,14 @@ import datetime
 import structlog
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 
 from collector.article_extractor import extract_article_content
 from collector.dedup import deduplicate_articles
 from collector.rss_fetcher import compute_content_hash, fetch_all_feeds
 from config.time_utils import utc_now
 from db.engine import async_session
-from db.models import NewsArticle, Subscriber
+from db.models import VALID_CATEGORIES, NewsArticle, Subscriber
 from delivery.whatsapp_sender import send_digest
 from processor.summarizer import generate_all_summaries
 from scheduler.step_runner import (
@@ -104,30 +105,52 @@ async def _step_summarize(
 ) -> StepResult:
     """Step 4: Generate LLM summaries for the collected articles.
     
-    We also fetch any unprocessed articles from the database that might
-    have been collected in previous runs that failed during summarization.
+    Scheduled runs also fetch unprocessed articles left by failed runs. Manual
+    replacement runs fetch the day's stored articles so summaries are refreshed
+    from the full available context, not only from newly collected rows.
     """
     from config.time_utils import local_today
     
     today = local_today()
+    start_of_day = datetime.datetime.combine(
+        today,
+        datetime.time.min,
+        tzinfo=datetime.timezone.utc,
+    )
+    article_filters = [
+        NewsArticle.published_at >= start_of_day,
+        NewsArticle.raw_content.is_not(None),
+        NewsArticle.raw_content != "",
+    ]
+    if not replace_existing_summaries:
+        article_filters.append(NewsArticle.processed.is_(False))
     
     async with async_session() as session:
         result = await session.execute(
-            select(NewsArticle).where(
-                NewsArticle.processed.is_(False),
-                NewsArticle.published_at >= datetime.datetime.combine(today, datetime.time.min, tzinfo=datetime.timezone.utc)
-            )
+            select(NewsArticle)
+            .options(selectinload(NewsArticle.source))
+            .where(*article_filters)
         )
-        unprocessed_db = result.scalars().all()
+        db_articles = result.scalars().all()
         
     # Combine the new articles with any unprocessed ones from the DB
     # We use a dict to deduplicate by ID in case they overlap
     all_articles_dict = {a.id: a for a in articles if a.id}
-    for a in unprocessed_db:
+    for a in db_articles:
         if a.id:
             all_articles_dict[a.id] = a
             
     combined_articles = list(all_articles_dict.values())
+    combined_article_ids = [article.id for article in combined_articles if article.id]
+    if combined_article_ids:
+        async with async_session() as session:
+            result = await session.execute(
+                select(NewsArticle)
+                .options(selectinload(NewsArticle.source))
+                .where(NewsArticle.id.in_(combined_article_ids))
+            )
+            combined_articles = list(result.scalars().all())
+
     if not combined_articles:
         combined_articles = articles # fallback to just the new ones if db fetch was weird
         
@@ -271,14 +294,20 @@ async def _run_pipeline_impl(
         articles = result.payload
         await update_pipeline_run(run.id, "running", articles_collected=len(articles))
 
-        if not articles:
+        if not articles and not replace_existing_summaries:
             logger.warning("No articles with content to process")
             await record_pipeline_event(run.id, "pipeline", "ok", "Nenhum artigo com conteúdo para processar")
             await update_pipeline_run(run.id, "completed")
             return
+        if not articles:
+            logger.info("No new articles with content; refreshing summaries from stored articles")
 
         # Step 4: Summarize
-        categories_present = {a.category for a in articles}
+        categories_present = (
+            set(VALID_CATEGORIES)
+            if replace_existing_summaries
+            else {a.category for a in articles}
+        )
         summarize_timeout = max(
             TIMEOUT_SUMMARIZE,
             len(categories_present) * TIMEOUT_SUMMARIZE_PER_CATEGORY,

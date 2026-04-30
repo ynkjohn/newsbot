@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import subprocess
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import interactions.command_router as command_router
-from db.models import Base, DeliveryLog, FeedSource, PipelineEvent, PipelineRun, Subscriber, Summary
+from db.models import (
+    Base,
+    DeliveryLog,
+    FeedSource,
+    NewsArticle,
+    PipelineEvent,
+    PipelineRun,
+    Subscriber,
+    Summary,
+)
 
 
 async def _create_sessionmaker(db_path: Path) -> tuple:
@@ -426,11 +436,235 @@ async def test_build_drilldown_response_for_command_reads_summary_items(tmp_path
     assert "O governo detalhou as datas de pagamento." in response
     assert "A medida afeta trabalhadores que aguardam o benefício." in response
     assert "Acompanhar o calendário da Caixa." in response
-    assert "O próximo ponto a observar" in response
-    assert "O que aconteceu" not in response
-    assert "Por que importa" not in response
+    assert "Próximo ponto" in response
+    assert "O que aconteceu" in response
+    assert "Por que importa" in response
     assert "Fique de olho" not in response
     assert "Para acompanhar" not in response
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_build_drilldown_response_includes_source_article_titles(tmp_path, monkeypatch):
+    import interactions.drilldown_handler as drilldown_handler
+
+    engine, sessionmaker = await _create_sessionmaker(tmp_path / "drilldown_sources.db")
+    monkeypatch.setattr(drilldown_handler, "async_session", sessionmaker)
+    monkeypatch.setattr(
+        drilldown_handler,
+        "get_llm_client",
+        lambda: (_ for _ in ()).throw(RuntimeError("LLM unavailable in test")),
+    )
+
+    async with sessionmaker() as session:
+        source = FeedSource(
+            url="https://g1.example/rss",
+            name="G1 Política",
+            category="politica-brasil",
+        )
+        session.add(source)
+        await session.flush()
+        article = NewsArticle(
+            source_id=source.id,
+            url="https://g1.example/dosimetria",
+            title="PL da Dosimetria: Câmara rejeita veto de Lula e decisão segue para o Senado",
+            raw_content="Texto da notícia",
+            category="politica-brasil",
+            published_at=datetime.datetime.now(datetime.timezone.utc),
+            processed=False,
+            content_hash="hash-dosimetria",
+        )
+        session.add(article)
+        await session.flush()
+        summary = Summary(
+            category="politica-brasil",
+            period="afternoon",
+            date=datetime.date.today(),
+            summary_text="Resumo",
+            key_takeaways={
+                "items": [
+                    {
+                        "title": "Congresso derruba veto ao PL da Dosimetria",
+                        "what_happened": "Câmara e Senado derrubaram o veto presidencial.",
+                        "why_it_matters": "A decisão muda o tratamento penal dos atos de 8 de janeiro.",
+                        "watchlist": "Acompanhar eventual contestação no STF.",
+                        "source_article_ids": [article.id],
+                        "command_hint": "!pl-dosimetria",
+                    }
+                ]
+            },
+            source_article_ids=[article.id],
+            model_used="model",
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        session.add(summary)
+        await session.commit()
+
+    response = await drilldown_handler.build_drilldown_response_for_command("!pl-dosimetria")
+
+    assert response is not None
+    assert "Base usada" in response
+    assert "G1 Política" in response
+    assert "PL da Dosimetria: Câmara rejeita veto" in response
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_build_drilldown_response_uses_llm_with_source_articles(tmp_path, monkeypatch):
+    import interactions.drilldown_handler as drilldown_handler
+
+    engine, sessionmaker = await _create_sessionmaker(tmp_path / "drilldown_llm.db")
+    monkeypatch.setattr(drilldown_handler, "async_session", sessionmaker)
+    calls: list[dict[str, str | int]] = []
+
+    class FakeLLM:
+        async def chat_async_with_usage(self, system_prompt, user_prompt, max_tokens):
+            calls.append(
+                {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "max_tokens": max_tokens,
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "*Congresso derruba veto ao PL da Dosimetria*\n\n"
+                    "Contexto: a votação reabriu a disputa sobre penas dos atos de 8 de janeiro.\n\n"
+                    "O que muda: o texto pode reduzir penas, mas ainda depende de contestação judicial.\n\n"
+                    "Base usada: G1 Política."
+                ),
+                usage=None,
+            )
+
+    monkeypatch.setattr(drilldown_handler, "get_llm_client", lambda: FakeLLM())
+
+    async with sessionmaker() as session:
+        source = FeedSource(
+            url="https://g1.example/rss",
+            name="G1 Política",
+            category="politica-brasil",
+        )
+        session.add(source)
+        await session.flush()
+        article = NewsArticle(
+            source_id=source.id,
+            url="https://g1.example/dosimetria-rich",
+            title="Congresso retoma revisão de penas e caso pode chegar ao STF",
+            raw_content=(
+                "Câmara e Senado derrubaram o veto ao projeto. "
+                "O texto reduz penas ligadas aos atos de 8 de janeiro, "
+                "mas a aplicação pode ser questionada no Supremo Tribunal Federal."
+            ),
+            category="politica-brasil",
+            published_at=datetime.datetime.now(datetime.timezone.utc),
+            processed=False,
+            content_hash="hash-dosimetria-rich",
+        )
+        session.add(article)
+        await session.flush()
+        session.add(
+            Summary(
+                category="politica-brasil",
+                period="afternoon",
+                date=datetime.date.today(),
+                summary_text="Resumo",
+                key_takeaways={
+                    "items": [
+                        {
+                            "title": "Congresso derruba veto ao PL da Dosimetria",
+                            "what_happened": "Câmara e Senado derrubaram o veto presidencial.",
+                            "why_it_matters": "A decisão muda o tratamento penal dos atos de 8 de janeiro.",
+                            "watchlist": "Acompanhar eventual contestação no STF.",
+                            "source_article_ids": [article.id],
+                            "command_hint": "!pl-dosimetria",
+                        }
+                    ]
+                },
+                source_article_ids=[article.id],
+                model_used="model",
+                created_at=datetime.datetime.now(datetime.timezone.utc),
+            )
+        )
+        await session.commit()
+
+    response = await drilldown_handler.build_drilldown_response_for_command("!pl-dosimetria")
+
+    assert response is not None
+    assert response.startswith("*Congresso derruba veto")
+    assert "Contexto:" in response
+    assert calls[0]["max_tokens"] == 1600
+    assert "Congresso retoma revisão de penas" in str(calls[0]["user_prompt"])
+    assert "Supremo Tribunal Federal" in str(calls[0]["user_prompt"])
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_build_drilldown_response_falls_back_when_llm_fails(tmp_path, monkeypatch):
+    import interactions.drilldown_handler as drilldown_handler
+
+    engine, sessionmaker = await _create_sessionmaker(tmp_path / "drilldown_llm_fallback.db")
+    monkeypatch.setattr(drilldown_handler, "async_session", sessionmaker)
+
+    class FailingLLM:
+        async def chat_async_with_usage(self, system_prompt, user_prompt, max_tokens):
+            raise RuntimeError("provider timeout")
+
+    monkeypatch.setattr(drilldown_handler, "get_llm_client", lambda: FailingLLM())
+
+    async with sessionmaker() as session:
+        source = FeedSource(
+            url="https://g1.example/rss",
+            name="G1 Política",
+            category="politica-brasil",
+        )
+        session.add(source)
+        await session.flush()
+        article = NewsArticle(
+            source_id=source.id,
+            url="https://g1.example/dosimetria-fallback",
+            title="PL da Dosimetria: decisão segue sob risco judicial",
+            raw_content="Texto da notícia",
+            category="politica-brasil",
+            published_at=datetime.datetime.now(datetime.timezone.utc),
+            processed=False,
+            content_hash="hash-dosimetria-fallback",
+        )
+        session.add(article)
+        await session.flush()
+        session.add(
+            Summary(
+                category="politica-brasil",
+                period="afternoon",
+                date=datetime.date.today(),
+                summary_text="Resumo",
+                key_takeaways={
+                    "items": [
+                        {
+                            "title": "Congresso derruba veto ao PL da Dosimetria",
+                            "what_happened": "Câmara e Senado derrubaram o veto presidencial.",
+                            "why_it_matters": "A decisão muda o tratamento penal dos atos de 8 de janeiro.",
+                            "watchlist": "Acompanhar eventual contestação no STF.",
+                            "source_article_ids": [article.id],
+                            "command_hint": "!pl-dosimetria",
+                        }
+                    ]
+                },
+                source_article_ids=[article.id],
+                model_used="model",
+                created_at=datetime.datetime.now(datetime.timezone.utc),
+            )
+        )
+        await session.commit()
+
+    response = await drilldown_handler.build_drilldown_response_for_command("!pl-dosimetria")
+
+    assert response is not None
+    assert "O que aconteceu: Câmara e Senado derrubaram o veto presidencial." in response
+    assert "Base usada" in response
+    assert "PL da Dosimetria: decisão segue sob risco judicial" in response
 
     await engine.dispose()
 
