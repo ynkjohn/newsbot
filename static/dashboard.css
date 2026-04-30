@@ -87,7 +87,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -1462,6 +1463,77 @@ body[data-view="reading"] #globalAlertBanner {
   line-height: 1.68;
 }
 
+.llm-config-hero {
+  gap: 18px;
+}
+
+.llm-config-panel {
+  margin-top: 18px;
+}
+
+.llm-section-note {
+  margin-top: 4px;
+  font-size: 0.76rem;
+}
+
+.llm-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel-strong);
+}
+
+.llm-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.llm-field-wide {
+  grid-column: 1 / -1;
+}
+
+.llm-field span {
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.llm-field small {
+  color: var(--text-soft);
+  font-size: 0.74rem;
+}
+
+.llm-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text);
+  outline: none;
+}
+
+.llm-input:focus {
+  border-color: color-mix(in srgb, var(--accent-gold) 62%, var(--line-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-gold) 18%, transparent);
+}
+
+.llm-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
 .empty-state,
 .skeleton-state {
   padding: 20px;
@@ -1656,6 +1728,7 @@ body[data-theme="dark"] #toast {
   .alert-banner,
   .ops-grid-bottom,
   .filters-grid,
+  .llm-config-grid,
   #view-reading.active {
     grid-template-columns: 1fr;
   }

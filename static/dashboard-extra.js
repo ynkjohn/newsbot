@@ -74,11 +74,15 @@
     tech: "Tecnologia",
   };
 
+  const VALID_VIEWS = ["ops", "reading", "subscribers", "feeds", "analytics", "llm-config"];
+
   const state = {
     loading: true,
     theme: "light",
     view: "ops",
     payload: null,
+    llmConfig: null,
+    llmBusy: false,
     currentDate: "all",
     filters: {
       search: "",
@@ -357,7 +361,7 @@
       if (!raw) return;
 
       const saved = JSON.parse(raw);
-      state.view = ["reading", "subscribers", "feeds", "analytics"].includes(saved.view) ? saved.view : "ops";
+      state.view = VALID_VIEWS.includes(saved.view) ? saved.view : "ops";
       state.currentDate = saved.currentDate || "all";
       state.filters.search = saved.search || "";
       state.filters.sort = saved.sort === "oldest" ? "oldest" : "newest";
@@ -530,7 +534,7 @@
   }
 
   function setView(view) {
-    state.view = ["reading", "subscribers", "feeds", "analytics"].includes(view) ? view : "ops";
+    state.view = VALID_VIEWS.includes(view) ? view : "ops";
     if (state.view !== "reading") {
       hideDrawer();
     }
@@ -766,6 +770,7 @@
     byId("nav-subscribers")?.classList.toggle("is-active", state.view === "subscribers");
     byId("nav-feeds")?.classList.toggle("is-active", state.view === "feeds");
     byId("nav-analytics")?.classList.toggle("is-active", state.view === "analytics");
+    byId("nav-llm-config")?.classList.toggle("is-active", state.view === "llm-config");
   }
 
   function renderAlertBanner(operation) {
@@ -1466,6 +1471,103 @@
       .join("");
   }
 
+  function currentLlmFormModel(config) {
+    const customValue = byId("llmModelCustom")?.value.trim();
+    const presetValue = byId("llmModelPreset")?.value || "";
+    return customValue || presetValue || config?.model || "";
+  }
+
+  function renderLlmConfig() {
+    byId("view-llm-config")?.classList.toggle("active", state.view === "llm-config");
+
+    const config = state.llmConfig;
+    const providerSelect = byId("llmProvider");
+    const modelPreset = byId("llmModelPreset");
+    const modelCustom = byId("llmModelCustom");
+    const baseUrl = byId("llmBaseUrl");
+    const apiKey = byId("llmApiKey");
+    const status = byId("llmConfigStatus");
+    const providerTag = byId("llmProviderTag");
+    const testButton = byId("btnTestLlmConfig");
+    const saveButton = byId("btnSaveLlmConfig");
+
+    if (!providerSelect || !modelPreset || !modelCustom || !baseUrl || !apiKey) return;
+
+    if (!config) {
+      providerSelect.innerHTML = '<option value="">Carregando...</option>';
+      modelPreset.innerHTML = '<option value="">Carregando...</option>';
+      if (status) status.textContent = "Carregando configuração";
+      if (providerTag) providerTag.textContent = "Provider não carregado";
+      if (testButton) testButton.disabled = true;
+      if (saveButton) saveButton.disabled = true;
+      return;
+    }
+
+    const providers = config.providers || {};
+    const currentProvider = providers[config.provider] ? config.provider : Object.keys(providers)[0] || "";
+    const providerMeta = providers[currentProvider] || {};
+    providerSelect.innerHTML = Object.entries(providers)
+      .map(([key, meta]) => `<option value="${escapeHtml(key)}" ${key === currentProvider ? "selected" : ""}>${escapeHtml(meta.label || key)}</option>`)
+      .join("");
+
+    const models = providerMeta.models || [];
+    const currentModel = config.provider === currentProvider ? config.model : models[0] || "";
+    const hasPreset = models.includes(currentModel);
+    modelPreset.innerHTML = [
+      '<option value="">Modelo customizado</option>',
+      ...models.map((model) => `<option value="${escapeHtml(model)}" ${model === currentModel ? "selected" : ""}>${escapeHtml(model)}</option>`),
+    ].join("");
+    modelCustom.value = hasPreset ? "" : currentModel;
+    baseUrl.value = config.provider === currentProvider ? config.baseUrl || "" : providerMeta.defaultBaseUrl || "";
+    apiKey.value = providerMeta.apiKeyMasked || "";
+
+    if (status) {
+      status.textContent = providerMeta.configured ? "Chave configurada" : "API key pendente";
+    }
+    if (providerTag) {
+      providerTag.textContent = `${providerMeta.label || currentProvider} · ${currentModel || "modelo não definido"}`;
+    }
+    if (testButton) testButton.disabled = state.llmBusy;
+    if (saveButton) saveButton.disabled = state.llmBusy;
+  }
+
+  function buildLlmConfigPayload() {
+    const provider = byId("llmProvider")?.value || "";
+    return {
+      provider,
+      model: currentLlmFormModel(state.llmConfig),
+      base_url: byId("llmBaseUrl")?.value.trim() || "",
+      api_key: byId("llmApiKey")?.value || "",
+    };
+  }
+
+  async function submitLlmConfig(action) {
+    const testing = action === "test";
+    state.llmBusy = true;
+    renderLlmConfig();
+    try {
+      const response = await fetch(testing ? "/api/llm-config/test" : "/api/llm-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(buildLlmConfigPayload()),
+      });
+      const payload = await parseResponse(response);
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Falha ao atualizar configuração LLM.");
+      }
+      if (!testing) {
+        state.llmConfig = payload;
+        renderLlmConfig();
+      }
+      showToast(testing ? "Conexão LLM testada com sucesso." : "Configuração LLM salva.", "ok");
+    } catch (error) {
+      showToast(error.message, "danger");
+    } finally {
+      state.llmBusy = false;
+      renderLlmConfig();
+    }
+  }
+
   function render() {
     renderTopbar();
     renderOperation();
@@ -1473,7 +1575,23 @@
     renderSubscribers();
     renderFeeds();
     renderAnalytics();
+    renderLlmConfig();
     updateClock();
+  }
+
+  async function fetchLlmConfig() {
+    try {
+      const response = await fetch("/api/llm-config", { headers: { Accept: "application/json" } });
+      const payload = await parseResponse(response);
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Falha ao carregar configuração LLM.");
+      }
+      state.llmConfig = payload;
+      renderLlmConfig();
+    } catch (error) {
+      console.debug(error);
+      showToast("Erro ao carregar configuração LLM.", "danger");
+    }
   }
 
   async function fetchSubscribers() {
@@ -1755,6 +1873,10 @@
       setView("analytics");
       fetchAnalytics();
     });
+    byId("nav-llm-config")?.addEventListener("click", () => {
+      setView("llm-config");
+      fetchLlmConfig();
+    });
     byId("btnThemeToggle")?.addEventListener("click", () => {
       applyTheme(state.theme === "dark" ? "light" : "dark");
       renderThemeToggle();
@@ -1769,6 +1891,19 @@
     byId("drawerClose")?.addEventListener("click", hideDrawer);
     byId("drawerBackdrop")?.addEventListener("click", hideDrawer);
     byId("btn-clearFilters")?.addEventListener("click", clearFilters);
+    byId("llmProvider")?.addEventListener("change", (event) => {
+      if (!state.llmConfig) return;
+      state.llmConfig = { ...state.llmConfig, provider: event.target.value };
+      renderLlmConfig();
+    });
+    byId("llmModelPreset")?.addEventListener("change", (event) => {
+      const custom = byId("llmModelCustom");
+      if (custom && event.target.value) {
+        custom.value = "";
+      }
+    });
+    byId("btnTestLlmConfig")?.addEventListener("click", () => submitLlmConfig("test"));
+    byId("btnSaveLlmConfig")?.addEventListener("click", () => submitLlmConfig("save"));
 
     document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
       button.addEventListener("click", () => runManualAction(button.dataset.pipelinePeriod));
@@ -1840,5 +1975,6 @@
   bindEvents();
   render();
   fetchDashboard();
+  fetchLlmConfig();
   window.setInterval(fetchDashboard, AUTO_REFRESH_MS);
 })();

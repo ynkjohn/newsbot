@@ -2,6 +2,7 @@ import asyncio
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -20,6 +21,8 @@ from db.engine import async_session, init_db
 from interactions.admin_auth import require_admin
 from interactions.dashboard_data import build_dashboard_payload
 from interactions.messages import retry_no_pending, retry_no_subscribers
+from processor.llm_client import reset_llm_client, test_llm_config
+from processor.llm_config import LLMConfigError, get_llm_config_store, public_payload
 from scheduler.jobs import (
     check_feed_health,
     cleanup_old_articles,
@@ -165,8 +168,7 @@ async def whatsapp_status():
     return await fetch_whatsapp_status()
 
 
-@app.get("/api/digest-preview/{period}", dependencies=[Depends(require_admin)])
-async def digest_preview(period: str):
+async def _build_digest_preview(period: str):
     from sqlalchemy import select
 
     from db.models import Summary
@@ -200,6 +202,16 @@ async def digest_preview(period: str):
         "text": preview_text,
         "parts": parts,
     }
+
+
+@app.get("/api/digest-preview/{period}", dependencies=[Depends(require_admin)])
+async def digest_preview(period: str):
+    return await _build_digest_preview(period)
+
+
+@app.post("/api/run-pipeline/last-24h", dependencies=[Depends(require_admin)])
+async def preview_last_24h_pipeline_action():
+    return await _build_digest_preview("morning")
 
 
 @app.post("/run-pipeline/{period}", dependencies=[Depends(require_admin)])
@@ -237,6 +249,36 @@ async def trigger_pipeline(period: str):
         "run_id": run_id,
         "message": "Pipeline iniciado. Acompanhe a execução nos logs do serviço newsbot.",
     }
+
+
+@app.get("/api/llm-config", dependencies=[Depends(require_admin)])
+async def get_llm_config():
+    return get_llm_config_store().public_payload()
+
+
+@app.post("/api/llm-config", dependencies=[Depends(require_admin)])
+async def save_llm_config(payload: dict[str, Any]):
+    try:
+        config = get_llm_config_store().save(payload)
+    except LLMConfigError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    reset_llm_client()
+    return public_payload(config)
+
+
+@app.post("/api/llm-config/test", dependencies=[Depends(require_admin)])
+async def test_llm_config_endpoint(payload: dict[str, Any]):
+    try:
+        config = get_llm_config_store().build_unsaved(payload)
+        await test_llm_config(config)
+    except LLMConfigError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except Exception as exc:
+        logger.warning("llm_config_test_failed", error=str(exc))
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+    return {"ok": True, "message": "Conexão LLM testada com sucesso."}
 
 
 @app.post("/api/retry-delivery/today", dependencies=[Depends(require_admin)])

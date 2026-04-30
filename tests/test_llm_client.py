@@ -5,17 +5,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 from openai import APIConnectionError, APITimeoutError
 
+from processor.llm_config import LLMRuntimeConfig
 from processor.llm_client import LLMClient
 
 
 @pytest.fixture
-def llm_client():
-    """Create LLM client with mocked API keys."""
-    with patch('processor.llm_client.settings') as mock_settings:
-        mock_settings.openrouter_api_key = "test-key"
-        mock_settings.openrouter_base_url = "https://openrouter.ai/api/v1"
-        mock_settings.llm_model_primary = "test-model"
-        mock_settings.llm_model_fallback = "fallback-model"
+def llm_client(monkeypatch):
+    """Create LLM client with mocked active config."""
+    monkeypatch.setattr(
+        "processor.llm_client.get_active_llm_config",
+        lambda: LLMRuntimeConfig(
+            provider="openrouter",
+            model="test-model",
+            base_url="https://openrouter.ai/api/v1",
+            api_keys={"openrouter": "test-key", "openai": "openai-key"},
+        ),
+    )
+    with patch("processor.llm_client.OpenAI"):
         client = LLMClient()
         yield client
 
@@ -131,3 +137,68 @@ async def test_llm_fallback_on_primary_failure(llm_client):
     
     result = await llm_client._chat_async("system", "user")
     assert result == "Fallback response"
+    llm_client._fallback.chat.completions.create.assert_called()
+    assert llm_client._fallback.chat.completions.create.call_args.kwargs["model"] == "gpt-4o-mini"
+
+
+def test_llm_client_uses_active_deepseek_config(monkeypatch):
+    from processor.llm_config import LLMRuntimeConfig
+
+    created = []
+
+    def fake_openai(**kwargs):
+        created.append(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr("processor.llm_client.OpenAI", fake_openai)
+    monkeypatch.setattr(
+        "processor.llm_client.get_active_llm_config",
+        lambda: LLMRuntimeConfig(
+            provider="deepseek",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_keys={"deepseek": "deepseek-key"},
+        ),
+    )
+
+    client = LLMClient()
+
+    assert client.model_name == "deepseek/deepseek-chat"
+    assert created == [{"api_key": "deepseek-key", "base_url": "https://api.deepseek.com", "timeout": 120.0}]
+
+
+def test_llm_client_raises_clear_error_without_active_key(monkeypatch):
+    from processor.llm_config import LLMRuntimeConfig
+
+    monkeypatch.setattr(
+        "processor.llm_client.get_active_llm_config",
+        lambda: LLMRuntimeConfig(
+            provider="deepseek",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_keys={"deepseek": ""},
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="No API key configured for deepseek"):
+        LLMClient()
+
+
+def test_reset_llm_client_recreates_singleton(monkeypatch):
+    import processor.llm_client as module
+
+    created = []
+
+    class FakeClient:
+        def __init__(self):
+            created.append(object())
+
+    monkeypatch.setattr(module, "LLMClient", FakeClient)
+    module.reset_llm_client()
+
+    first = module.get_llm_client()
+    module.reset_llm_client()
+    second = module.get_llm_client()
+
+    assert first is not second
+    assert len(created) == 2

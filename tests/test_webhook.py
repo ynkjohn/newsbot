@@ -210,6 +210,62 @@ def test_digest_preview_rejects_invalid_period():
     assert response.status_code == 400
 
 
+
+def test_legacy_last_24h_action_returns_digest_preview(monkeypatch):
+    from datetime import date, datetime, timezone
+
+    from db.models import Summary
+
+    summary = Summary(
+        id=789,
+        category="tech",
+        period="morning",
+        date=date.today(),
+        summary_text="Resumo Tech",
+        key_takeaways={
+            "items": [
+                {
+                    "title": "Robôs aceleram entregas",
+                    "summary": "Operadores reduzem atrasos com automação.",
+                    "trust_status": "trusted",
+                    "importance_score": 4,
+                }
+            ]
+        },
+        source_article_ids=[],
+        model_used="test-model",
+        created_at=datetime.now(timezone.utc),
+        sent_at=None,
+    )
+
+    class DummyResult:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return [summary]
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def execute(self, statement):
+            return DummyResult()
+
+    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
+
+    response = client.post("/api/run-pipeline/last-24h", headers=_get_admin_headers())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["period"] == "morning"
+    assert payload["summaryCount"] == 1
+    assert "Robôs aceleram entregas" in payload["text"]
+
+
 def test_dashboard_buttons_expose_digest_preview_action():
     response = client.get("/dashboard", headers=_get_admin_headers())
 
@@ -448,3 +504,106 @@ def test_manual_pipeline_invalid_period():
     response = client.post("/run-pipeline/invalid", headers=_get_admin_headers())
     assert response.status_code == 400
     assert "error" in response.json()
+
+
+def test_llm_config_requires_admin_auth():
+    response = client.get("/api/llm-config")
+
+    assert response.status_code == 401
+
+
+def test_llm_config_get_does_not_expose_api_key(monkeypatch, tmp_path):
+    from processor.llm_config import LLMConfigStore
+
+    store = LLMConfigStore(path=tmp_path / "llm_config.json")
+    store.save(
+        {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "deepseek-secret",
+        }
+    )
+    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+
+    response = client.get("/api/llm-config", headers=_get_admin_headers())
+
+    assert response.status_code == 200
+    body_text = response.text
+    payload = response.json()
+    assert payload["provider"] == "deepseek"
+    assert payload["model"] == "deepseek-chat"
+    assert "deepseek-secret" not in body_text
+    assert payload["providers"]["deepseek"]["configured"] is True
+
+
+def test_llm_config_post_saves_and_resets_client(monkeypatch, tmp_path):
+    from processor.llm_config import LLMConfigStore
+
+    store = LLMConfigStore(path=tmp_path / "llm_config.json")
+    reset_calls = []
+    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+    monkeypatch.setattr(app_module, "reset_llm_client", lambda: reset_calls.append(True))
+
+    response = client.post(
+        "/api/llm-config",
+        headers=_get_admin_headers(),
+        json={
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "deepseek-secret",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "deepseek"
+    assert store.load().api_keys["deepseek"] == "deepseek-secret"
+    assert reset_calls == [True]
+
+
+def test_llm_config_post_rejects_invalid_provider(monkeypatch, tmp_path):
+    from processor.llm_config import LLMConfigStore
+
+    store = LLMConfigStore(path=tmp_path / "llm_config.json")
+    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+
+    response = client.post(
+        "/api/llm-config",
+        headers=_get_admin_headers(),
+        json={"provider": "invalid", "model": "x", "base_url": "https://example.com", "api_key": "key"},
+    )
+
+    assert response.status_code == 400
+    assert "Provider desconhecido" in response.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_llm_config_test_endpoint_uses_unsaved_payload(monkeypatch, tmp_path):
+    from processor.llm_config import LLMConfigStore
+
+    store = LLMConfigStore(path=tmp_path / "llm_config.json")
+    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+
+    async def fake_test_llm_config(config):
+        assert config.provider == "deepseek"
+        assert config.model == "deepseek-chat"
+        assert config.api_key == "deepseek-secret"
+        return "ok"
+
+    monkeypatch.setattr(app_module, "test_llm_config", fake_test_llm_config)
+
+    response = client.post(
+        "/api/llm-config/test",
+        headers=_get_admin_headers(),
+        json={
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "base_url": "https://api.deepseek.com",
+            "api_key": "deepseek-secret",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "message": "Conexão LLM testada com sucesso."}
+    assert not (tmp_path / "llm_config.json").exists()

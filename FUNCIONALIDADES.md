@@ -80,6 +80,7 @@ Horários configuráveis via `PIPELINE_HOURS` (ex: `7,12,17,21`).
 - Mensagens longas são divididas automaticamente em partes
 - Retry automático em caso de falha
 - Registra cada entrega no banco (`DeliveryLog`)
+- Permite gerar prévia fiel do digest antes do envio, usando o mesmo formatador e a mesma divisão em partes do WhatsApp
 
 ---
 
@@ -107,16 +108,72 @@ Além dos comandos, o usuário pode **fazer perguntas em linguagem natural** sob
 
 Endpoints disponíveis em `http://localhost:8000`:
 
-| Método | Endpoint                 | Descrição                                                                  |
-| ------ | ------------------------ | -------------------------------------------------------------------------- |
-| `GET`  | `/health`                | Status do serviço                                                          |
-| `GET`  | `/api/dashboard`         | Dados do dashboard (requer auth)                                           |
-| `POST` | `/run-pipeline/{period}` | Dispara pipeline manualmente (`morning`, `midday`, `afternoon`, `evening`) |
-| `POST` | `/webhook/whatsapp`      | Recebe mensagens do whatsapp-bridge                                        |
+| Método | Endpoint                         | Descrição                                                                  |
+| ------ | -------------------------------- | -------------------------------------------------------------------------- |
+| `GET`  | `/health`                        | Status do serviço                                                          |
+| `GET`  | `/dashboard`                     | Interface web protegida por autenticação admin                             |
+| `GET`  | `/api/dashboard`                 | Dados operacionais do dashboard (requer auth)                              |
+| `GET`  | `/api/whatsapp-status`           | Status atual da ponte WhatsApp                                             |
+| `GET`  | `/api/digest-preview/{period}`   | Prévia fiel do digest por janela (`morning`, `midday`, `afternoon`, `evening`) |
+| `POST` | `/run-pipeline/{period}`         | Dispara pipeline manualmente (`morning`, `midday`, `afternoon`, `evening`) |
+| `POST` | `/api/run-pipeline/last-24h`     | Compatibilidade do botão de prévia 24h; retorna prévia do digest matutino  |
+| `POST` | `/api/retry-delivery/today`      | Reenvia resumos pendentes de hoje                                          |
+| `GET`  | `/api/subscribers`               | Lista assinantes                                                           |
+| `POST` | `/api/subscribers/{id}/toggle`   | Ativa/desativa assinante                                                   |
+| `GET`  | `/api/feeds`                     | Lista feeds RSS                                                            |
+| `POST` | `/api/feeds/{id}/toggle`         | Ativa/desativa feed                                                        |
+| `GET`  | `/api/analytics`                 | Métricas recentes de volume e uso                                          |
+| `POST` | `/api/summaries/{id}/approve`    | Aprova resumo para envio                                                   |
+| `POST` | `/webhook/whatsapp`              | Recebe mensagens do whatsapp-bridge                                        |
 
 ---
 
-### 7. WhatsApp Bridge (Node.js/Baileys)
+### 7. Dashboard Operacional
+
+O dashboard em `/dashboard` funciona como centro de comando local para acompanhar a operação sem depender de logs manuais.
+
+**Dados exibidos:**
+
+- Saúde geral da operação com explicação das penalidades (`healthBreakdown`)
+- Status da WhatsApp Bridge e próxima janela programada
+- Contadores de assinantes, resumos do dia, resumos pendentes, falhas de entrega e feeds inativos
+- Timeline diária das janelas `morning`, `midday`, `afternoon` e `evening`
+- Histórico dos pipelines recentes com duração, métricas de coleta/resumo/envio e eventos por etapa
+- Health de feeds (`healthy`, `degraded`, `stale`, `paused`, `broken`)
+- Drilldown de falhas recentes de entrega com assinante, resumo e mensagem de erro
+- Leitura dos resumos com fontes (`sourceUrls`), status editorial, sentimento, risco, bullets e corpo completo
+
+**Ações disponíveis:**
+
+- Recarregar dados do dashboard
+- Alternar tema claro/escuro
+- Gerar prévia do WhatsApp antes do envio
+- Disparar manualmente uma janela do pipeline
+- Reenviar pendências de hoje
+- Ativar/desativar assinantes
+- Ativar/desativar feeds
+- Aprovar resumo para liberação
+
+---
+
+### 8. Flight Recorder do Pipeline
+
+Cada execução do pipeline é registrada em `pipeline_runs` e pode ter eventos detalhados em `pipeline_events`.
+
+**Etapas instrumentadas:**
+
+- `pipeline`
+- `fetch_feeds`
+- `deduplicate`
+- `extract_articles`
+- `summarize`
+- `delivery`
+
+Cada evento guarda `step`, `status`, `message`, `metadata` e horário de criação. Runs manuais propagam um `run_id` como `requestId` nos eventos para facilitar correlação entre clique no dashboard, logs e histórico.
+
+---
+
+### 9. WhatsApp Bridge (Node.js/Baileys)
 
 Microserviço leve que gerencia a conexão com o WhatsApp Web:
 
@@ -162,7 +219,13 @@ docker compose up -d --build
 docker compose logs whatsapp-bridge -f
 
 # Testar pipeline manualmente
-curl -X POST http://localhost:8000/run-pipeline/morning
+curl -u admin:SUA_SENHA -X POST http://localhost:8000/run-pipeline/morning
+
+# Gerar prévia do digest matutino
+curl -u admin:SUA_SENHA http://localhost:8000/api/digest-preview/morning
+
+# Compatibilidade do botão "Prévia 24h"
+curl -u admin:SUA_SENHA -X POST http://localhost:8000/api/run-pipeline/last-24h
 
 # Ver logs em tempo real
 docker compose logs newsbot -f
@@ -181,6 +244,7 @@ Tabelas principais:
 - `delivery_logs` — histórico de envios
 - `user_interactions` — histórico de comandos recebidos
 - `pipeline_runs` — histórico de execuções do pipeline
+- `pipeline_events` — eventos por etapa da execução, com status, mensagem e metadata
 
 ---
 

@@ -8,9 +8,14 @@ import structlog
 from openai import OpenAI, APITimeoutError, RateLimitError, APIConnectionError, APIStatusError
 
 from config.settings import settings
+from processor.llm_config import LLMRuntimeConfig, get_active_llm_config
 from processor.prompts import CORRECTION_PROMPT
 
 logger = structlog.get_logger()
+
+
+def _direct_openai_model_name(model: str) -> str:
+    return model.removeprefix("openai/")
 
 
 class LLMClient:
@@ -23,27 +28,35 @@ class LLMClient:
     def __init__(self):
         self._primary: OpenAI | None = None
         self._fallback: OpenAI | None = None
+        self._active_config: LLMRuntimeConfig | None = None
         self._primary_model = settings.llm_model_primary
-        self._fallback_model = settings.llm_model_fallback
+        self._fallback_model = _direct_openai_model_name(settings.llm_model_fallback)
         self._init_clients()
 
+    def _openai_kwargs(self, api_key: str, base_url: str, timeout: float) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"api_key": api_key, "timeout": timeout}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return kwargs
+
     def _init_clients(self):
-        if settings.openrouter_api_key:
-            self._primary = OpenAI(
-                api_key=settings.openrouter_api_key,
-                base_url=settings.openrouter_base_url,
-                timeout=120.0,  # 120s timeout for primary (deepseek is slow)
-            )
+        config = get_active_llm_config()
+        self._active_config = config
+        self._primary_model = config.model
+        self._fallback_model = _direct_openai_model_name(settings.llm_model_fallback)
 
-        if settings.openai_api_key:
+        if not config.api_key:
+            raise RuntimeError(f"No API key configured for {config.provider}.")
+
+        self._primary = OpenAI(
+            **self._openai_kwargs(config.api_key, config.base_url, config.timeout)
+        )
+
+        # Keep OpenAI fallback for non-OpenAI active providers when configured.
+        if config.provider != "openai" and config.api_keys.get("openai"):
             self._fallback = OpenAI(
-                api_key=settings.openai_api_key,
+                api_key=config.api_keys["openai"],
                 timeout=60.0,  # 60s timeout for fallback
-            )
-
-        if not self._primary and not self._fallback:
-            raise RuntimeError(
-                "No LLM API key configured. Set OPENROUTER_API_KEY or OPENAI_API_KEY."
             )
 
     async def _call_with_retry(
@@ -273,6 +286,10 @@ class LLMClient:
     @property
     def model_name(self) -> str:
         """Return the name of the model being used."""
+        if self._active_config and self._primary:
+            if self._active_config.provider == "openai":
+                return f"openai/{self._primary_model}"
+            return f"{self._active_config.provider}/{self._primary_model}"
         if self._primary:
             return self._primary_model
         return f"openai/{self._fallback_model}"
@@ -290,3 +307,32 @@ def get_llm_client() -> LLMClient:
         if _client is None:
             _client = LLMClient()
         return _client
+
+
+async def test_llm_config(config: LLMRuntimeConfig) -> str:
+    """Test an unsaved LLM config with a minimal chat request."""
+    if not config.api_key:
+        raise RuntimeError(f"No API key configured for {config.provider}.")
+
+    kwargs: dict[str, Any] = {"api_key": config.api_key, "timeout": config.timeout}
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    client = OpenAI(**kwargs)
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
+        model=config.model,
+        messages=[
+            {"role": "system", "content": "Responda apenas com ok."},
+            {"role": "user", "content": "Teste de conexão."},
+        ],
+        max_tokens=4,
+    )
+    content = response.choices[0].message.content if response.choices else ""
+    return (content or "").strip()
+
+
+def reset_llm_client() -> None:
+    """Clear the singleton so the next access uses the active LLM config."""
+    global _client
+    with _client_lock:
+        _client = None

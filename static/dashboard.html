@@ -34,6 +34,7 @@
           <button class="nav-btn" id="nav-subscribers" data-view="subscribers" type="button">Assinantes</button>
           <button class="nav-btn" id="nav-feeds" data-view="feeds" type="button">Fontes</button>
           <button class="nav-btn" id="nav-analytics" data-view="analytics" type="button">Analytics</button>
+          <button class="nav-btn" id="nav-llm-config" data-view="llm-config" type="button">LLM</button>
         </div>
         <div class="nav-actions">
           <button class="btn-theme" id="btnThemeToggle" type="button" aria-pressed="false">
@@ -319,7 +320,7 @@
                 <p class="ops-hero-copy">Visualize o volume de notícias, uso de tokens e saúde da entrega nos últimos 7 dias.</p>
               </div>
             </div>
-            
+
             <div class="ops-grid-bottom" style="margin-top: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
               <section class="ops-section">
                 <div class="ops-section-head">
@@ -329,7 +330,7 @@
                   <canvas id="chartCategories"></canvas>
                 </div>
               </section>
-              
+
               <section class="ops-section">
                 <div class="ops-section-head">
                   <h3>Uso de Tokens (LLM)</h3>
@@ -339,6 +340,70 @@
                 </div>
               </section>
             </div>
+          </section>
+        </main>
+
+        <main id="view-llm-config" class="view-content" aria-labelledby="nav-llm-config">
+          <section class="ops-hero llm-config-hero">
+            <div class="ops-hero-head">
+              <div class="ops-hero-copy-block">
+                <div class="ops-hero-kicker-row">
+                  <p class="eyebrow">Configuração de IA</p>
+                </div>
+                <h2>Provider e modelo LLM</h2>
+                <p class="ops-hero-copy">Troque entre OpenRouter, DeepSeek direto e OpenAI sem reiniciar o NewsBot. Chaves ficam salvas localmente e mascaradas na dashboard.</p>
+              </div>
+              <div class="ops-hero-tags">
+                <span id="llmProviderTag" class="tag-premium">Provider não carregado</span>
+              </div>
+            </div>
+
+            <section class="ops-section llm-config-panel">
+              <div class="ops-section-head">
+                <div>
+                  <h3>Conexão ativa</h3>
+                  <p class="section-note llm-section-note">Teste antes de salvar para evitar interromper o pipeline.</p>
+                </div>
+                <span id="llmConfigStatus" class="tag-premium">Aguardando configuração</span>
+              </div>
+
+              <div class="llm-config-grid">
+                <label class="llm-field">
+                  <span>Provider</span>
+                  <select id="llmProvider" class="llm-input">
+                    <option value="">Carregando...</option>
+                  </select>
+                </label>
+
+                <label class="llm-field">
+                  <span>Modelo sugerido</span>
+                  <select id="llmModelPreset" class="llm-input">
+                    <option value="">Carregando...</option>
+                  </select>
+                </label>
+
+                <label class="llm-field">
+                  <span>Modelo customizado</span>
+                  <input id="llmModelCustom" class="llm-input" type="text" autocomplete="off" placeholder="ex.: deepseek-chat" />
+                </label>
+
+                <label class="llm-field">
+                  <span>Base URL</span>
+                  <input id="llmBaseUrl" class="llm-input" type="url" autocomplete="off" placeholder="https://api.deepseek.com" />
+                </label>
+
+                <label class="llm-field llm-field-wide">
+                  <span>API key</span>
+                  <input id="llmApiKey" class="llm-input" type="password" autocomplete="new-password" placeholder="Cole uma nova chave ou mantenha a atual mascarada" />
+                  <small id="llmApiKeyHint">A chave atual nunca é exibida em texto claro.</small>
+                </label>
+              </div>
+
+              <div class="llm-config-actions">
+                <button id="btnTestLlmConfig" class="btn-secondary" type="button">Testar conexão</button>
+                <button id="btnSaveLlmConfig" class="btn-reload" type="button">Salvar configuração</button>
+              </div>
+            </section>
           </section>
         </main>
       </div>
@@ -387,6 +452,6 @@
     <div id="toast" role="status" aria-live="polite"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/dashboard-extra.js?v=20260425-3"></script>
+    <script src="/static/dashboard-extra.js?v=20260429-llm-2"></script>
   </body>
 </html>
