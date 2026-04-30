@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from db.models import NewsArticle
+from db.models import NewsArticle, Summary
+from processor.llm_client import LLMUsage
 from processor.summarizer import SummaryOutput, generate_summaries_for_category
 
 
@@ -57,7 +58,8 @@ def mock_summary_output():
                 "why_it_matters": "A disputa passa a depender de receita recorrente e vantagem defensável, não apenas de anúncios de produto.",
                 "what_happened": "A rodada trouxe anúncios de produto e expansão comercial em IA aplicada.",
                 "watchlist": "Acompanhar conversão em receita, uso recorrente e barreiras competitivas.",
-                "source_article_ids": [1],
+                "source_indexes": [1],
+                "source_article_ids": [],
                 "importance": "high",
                 "importance_score": 5,
                 "novelty": "new",
@@ -125,6 +127,15 @@ def test_summary_output_preserves_short_command_hint():
     assert parsed.items[0].command_hint == "!ia"
 
 
+def test_summary_output_clamps_importance_score_to_allowed_range(mock_summary_output):
+    payload = mock_summary_output.model_dump()
+    payload["items"][0]["importance_score"] = 10
+
+    parsed = SummaryOutput(**payload)
+
+    assert parsed.items[0].importance_score == 5
+
+
 def test_summary_output_rejects_numeric_position_command_hint(mock_summary_output):
     payload = mock_summary_output.model_dump()
     payload["items"][0]["command_hint"] = "!1"
@@ -140,7 +151,17 @@ async def test_summarizer_marks_articles_processed(
     mock_async_session, mock_get_llm_client, mock_article, mock_summary_output
 ):
     mock_llm = AsyncMock()
-    mock_llm.chat_json_async.return_value = mock_summary_output.model_dump()
+    mock_llm.chat_json_async_with_usage.return_value = (
+        mock_summary_output.model_dump(),
+        LLMUsage(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            estimated_cost_usd=0.0000196,
+        ),
+    )
     mock_llm.model_name = "test-model"
     mock_get_llm_client.return_value = mock_llm
 
@@ -167,7 +188,15 @@ async def test_summarizer_marks_articles_processed(
 
     mock_update_result = MagicMock()
 
-    mock_session.execute.side_effect = [mock_result_articles, mock_result_summary, mock_update_result]
+    mock_result_no_summary = MagicMock()
+    mock_result_no_summary.scalar_one_or_none.return_value = None
+
+    mock_session.execute.side_effect = [
+        mock_result_no_summary,
+        mock_result_articles,
+        mock_result_summary,
+        mock_update_result,
+    ]
     mock_async_session.return_value.__aenter__.return_value = mock_session
     mock_async_session.return_value.__aexit__ = AsyncMock()
 
@@ -179,6 +208,119 @@ async def test_summarizer_marks_articles_processed(
     assert result.key_takeaways["version"] == 3
     assert result.key_takeaways["sections"][0]["key"] == "o_que_mudou"
     assert result.key_takeaways["items"][0]["command_hint"] == "!ia"
+    assert result.key_takeaways["items"][0]["source_article_ids"] == [1]
+    assert result.token_count == 120
+    assert result._llm_usage["total_tokens"] == 120
     assert "Empresas aceleram monetização de IA — !ia" in result.summary_text
     assert mock_session.commit.called
     assert mock_session.add.called
+
+
+@pytest.mark.asyncio
+@patch("processor.summarizer.get_llm_client")
+@patch("processor.summarizer.async_session")
+async def test_summarizer_skips_existing_summary_without_calling_llm(
+    mock_async_session, mock_get_llm_client, mock_article
+):
+    mock_llm = AsyncMock()
+    mock_get_llm_client.return_value = mock_llm
+
+    existing_summary = Summary(
+        category="tech",
+        period="morning",
+        date=datetime.date(2026, 4, 30),
+        summary_text="Resumo antigo",
+        key_takeaways={},
+        source_article_ids=[1],
+        model_used="old-model",
+    )
+
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock()
+
+    mock_result_existing = MagicMock()
+    mock_result_existing.scalar_one_or_none.return_value = existing_summary
+    mock_session.execute.return_value = mock_result_existing
+
+    mock_async_session.return_value.__aenter__.return_value = mock_session
+    mock_async_session.return_value.__aexit__ = AsyncMock()
+
+    result = await generate_summaries_for_category([mock_article], "morning")
+
+    assert result is None
+    assert not mock_llm.chat_json_async_with_usage.called
+    assert mock_session.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+@patch("processor.summarizer.get_llm_client")
+@patch("processor.summarizer.async_session")
+async def test_summarizer_replaces_existing_summary_when_requested(
+    mock_async_session, mock_get_llm_client, mock_article, mock_summary_output
+):
+    mock_llm = AsyncMock()
+    mock_llm.chat_json_async_with_usage.return_value = (
+        mock_summary_output.model_dump(),
+        LLMUsage(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            estimated_cost_usd=0.0000196,
+        ),
+    )
+    mock_llm.model_name = "test-model"
+    mock_get_llm_client.return_value = mock_llm
+
+    existing_summary = Summary(
+        category="tech",
+        period="morning",
+        date=datetime.date(2026, 4, 30),
+        summary_text="Resumo antigo",
+        key_takeaways={"version": 1},
+        source_article_ids=[99],
+        model_used="old-model",
+        token_count=123,
+        created_at=datetime.datetime(2026, 4, 30, 7, 0),
+        sent_at=datetime.datetime(2026, 4, 30, 8, 0),
+    )
+    existing_summary.id = 999
+
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock()
+    mock_session.flush = AsyncMock()
+    mock_session.refresh = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.rollback = AsyncMock()
+
+    mock_result_articles = MagicMock()
+    mock_result_articles.scalars.return_value.all.return_value = [mock_article]
+
+    mock_result_summary = MagicMock()
+    mock_result_summary.scalar_one_or_none.return_value = existing_summary
+
+    mock_update_result = MagicMock()
+    mock_session.execute.side_effect = [mock_result_articles, mock_result_summary, mock_update_result]
+
+    mock_async_session.return_value.__aenter__.return_value = mock_session
+    mock_async_session.return_value.__aexit__ = AsyncMock()
+
+    result = await generate_summaries_for_category(
+        [mock_article],
+        "morning",
+        replace_existing=True,
+    )
+
+    assert result is existing_summary
+    assert result.source_article_ids == [1]
+    assert result.model_used == "test-model"
+    assert result.token_count == 120
+    assert result.created_at != datetime.datetime(2026, 4, 30, 7, 0)
+    assert result.sent_at is None
+    assert "Empresas aceleram monetização de IA — !ia" in result.summary_text
+    assert result.key_takeaways["version"] == 3
+    assert result.key_takeaways["items"][0]["source_article_ids"] == [1]
+    assert result._llm_usage["estimated_cost_usd"] == 0.0000196
+    assert not mock_session.add.called
+    assert mock_session.commit.called

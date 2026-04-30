@@ -180,7 +180,7 @@ async def test_send_whatsapp_message_returns_none_after_retries(monkeypatch):
 async def test_manual_pipeline_returns_traceable_run_id(monkeypatch):
     from app import app
 
-    async def fake_pipeline(request_id=None):
+    async def fake_pipeline(request_id=None, replace_existing_summaries=False):
         return None
 
     created_tasks = []
@@ -194,8 +194,8 @@ async def test_manual_pipeline_returns_traceable_run_id(monkeypatch):
 
         return FakeTask()
 
-    monkeypatch.setattr("app.run_morning_pipeline", fake_pipeline)
-    monkeypatch.setattr("app.asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("routers.pipeline.run_morning_pipeline", fake_pipeline)
+    monkeypatch.setattr("routers.pipeline.asyncio.create_task", fake_create_task)
     monkeypatch.setattr("interactions.admin_auth.settings.admin_username", "admin")
     monkeypatch.setattr("interactions.admin_auth.settings.admin_password", "test-password")
 
@@ -211,6 +211,7 @@ async def test_manual_pipeline_returns_traceable_run_id(monkeypatch):
     assert len(payload["run_id"]) >= 8
     assert len(created_tasks) == 1
     assert created_tasks[0].cr_frame.f_locals["request_id"] == payload["run_id"]
+    assert created_tasks[0].cr_frame.f_locals["replace_existing_summaries"] is True
 
     created_tasks[0].close()
 

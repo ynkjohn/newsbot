@@ -1,6 +1,5 @@
 import asyncio
 import random
-import re
 
 import httpx
 import structlog
@@ -8,6 +7,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config.settings import settings
 from config.time_utils import local_today, utc_now
+from core.retry import WHATSAPP_RETRY
+from core.whatsapp_identity import canonical_key, destination_priority, is_allowed, to_send_jid
 from db.engine import async_session
 from db.models import DeliveryLog, Subscriber, Summary
 from delivery.message_formatter import filter_summaries_by_preferences, format_digest, split_message
@@ -19,10 +20,7 @@ rate_limiter = TokenBucketRateLimiter(rate=settings.send_rate_limit)
 
 
 def _format_phone(phone_number: str) -> str:
-    phone = phone_number.replace("whatsapp:", "").strip()
-    if "@g.us" in phone or "@lid" in phone or "@s.whatsapp.net" in phone:
-        return phone
-    return f"{phone}@s.whatsapp.net"
+    return to_send_jid(phone_number)
 
 
 async def _send_whatsapp_message(phone_number: str, text: str) -> dict | None:
@@ -32,8 +30,8 @@ async def _send_whatsapp_message(phone_number: str, text: str) -> dict | None:
     if settings.whatsapp_bridge_token:
         headers["Authorization"] = f"Bearer {settings.whatsapp_bridge_token}"
 
-    max_retries = 3
-    backoff_delays = [1, 5, 10]
+    max_retries = WHATSAPP_RETRY.max_attempts
+    backoff_delays = WHATSAPP_RETRY.backoff_delays
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         for attempt in range(1, max_retries + 1):
@@ -156,13 +154,20 @@ async def _mark_subscriber_sent(subscriber_id: int) -> None:
 
 
 async def _mark_summaries_sent(summary_ids: set[int]) -> None:
+    """Batch-update sent_at for all delivered summaries in a single statement."""
+    if not summary_ids:
+        return
+
+    from sqlalchemy import update
+
     try:
         sent_at = utc_now()
         async with async_session() as session:
-            for summary_id in summary_ids:
-                summary = await session.get(Summary, summary_id)
-                if summary:
-                    summary.sent_at = sent_at
+            await session.execute(
+                update(Summary)
+                .where(Summary.id.in_(summary_ids))
+                .values(sent_at=sent_at)
+            )
             await session.commit()
     except SQLAlchemyError as exc:
         logger.error(f"Failed to mark summaries as sent: {exc}")
@@ -174,16 +179,18 @@ async def _log_delivery_results(
     status: str,
     error_message: str | None = None,
 ) -> None:
+    """Batch-insert delivery log entries for all summaries in a single commit."""
+    logs = [
+        DeliveryLog(
+            subscriber_id=subscriber_id,
+            summary_id=summary.id,
+            status=status,
+            error_message=error_message,
+        )
+        for summary in summaries
+    ]
     async with async_session() as session:
-        for summary in summaries:
-            session.add(
-                DeliveryLog(
-                    subscriber_id=subscriber_id,
-                    summary_id=summary.id,
-                    status=status,
-                    error_message=error_message,
-                )
-            )
+        session.add_all(logs)
         await session.commit()
 
 
@@ -194,9 +201,9 @@ def _deduplicate_subscribers(subscribers: list[Subscriber]) -> list[Subscriber]:
         if not phone:
             continue
 
-        key = _subscriber_destination_key(phone)
+        key = canonical_key(phone)
         current = selected.get(key)
-        if current is None or _subscriber_priority(phone) > _subscriber_priority(current.phone_number):
+        if current is None or destination_priority(phone) > destination_priority(current.phone_number):
             selected[key] = subscriber
     return list(selected.values())
 
@@ -205,33 +212,14 @@ def _filter_delivery_subscribers(subscribers: list[Subscriber]) -> list[Subscrib
     if not settings.allowed_numbers:
         return subscribers
 
-    allowed_list = [item.strip() for item in settings.allowed_numbers.split(",") if item.strip()]
-    allowed_keys = {_subscriber_destination_key(item) for item in allowed_list}
-    allowed_exact = {item for item in allowed_list if "@" in item}
-
     filtered: list[Subscriber] = []
     for subscriber in subscribers:
         phone = (subscriber.phone_number or "").strip()
         if not phone:
             continue
 
-        if phone in allowed_exact or _subscriber_destination_key(phone) in allowed_keys:
+        if is_allowed(phone, settings.allowed_numbers):
             filtered.append(subscriber)
         else:
             logger.info(f"Skipping non-whitelisted subscriber in delivery: {phone}")
     return filtered
-
-
-def _subscriber_destination_key(phone_number: str) -> str:
-    digits = re.sub(r"\D", "", phone_number)
-    return digits or phone_number
-
-
-def _subscriber_priority(phone_number: str) -> int:
-    if "@g.us" in phone_number:
-        return 4
-    if "@lid" in phone_number:
-        return 3
-    if "@s.whatsapp.net" in phone_number:
-        return 2
-    return 1

@@ -1543,13 +1543,19 @@
 
   async function submitLlmConfig(action) {
     const testing = action === "test";
+    const payloadBody = buildLlmConfigPayload();
+    
     state.llmBusy = true;
-    renderLlmConfig();
+    const testBtn = byId("btnTestLlmConfig");
+    const saveBtn = byId("btnSaveLlmConfig");
+    if (testBtn) testBtn.disabled = true;
+    if (saveBtn) saveBtn.disabled = true;
+
     try {
       const response = await fetch(testing ? "/api/llm-config/test" : "/api/llm-config", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(buildLlmConfigPayload()),
+        body: JSON.stringify(payloadBody),
       });
       const payload = await parseResponse(response);
       if (!response.ok) {
@@ -1557,14 +1563,17 @@
       }
       if (!testing) {
         state.llmConfig = payload;
-        renderLlmConfig();
       }
       showToast(testing ? "Conexão LLM testada com sucesso." : "Configuração LLM salva.", "ok");
     } catch (error) {
       showToast(error.message, "danger");
     } finally {
       state.llmBusy = false;
-      renderLlmConfig();
+      if (testBtn) testBtn.disabled = false;
+      if (saveBtn) saveBtn.disabled = false;
+      if (!testing) {
+        renderLlmConfig();
+      }
     }
   }
 

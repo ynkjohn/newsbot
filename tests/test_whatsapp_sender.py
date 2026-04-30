@@ -196,7 +196,8 @@ async def test_send_digest_only_updates_last_sent_on_success(mock_subscriber, mo
          patch('delivery.whatsapp_sender.format_digest') as mock_format, \
          patch('delivery.whatsapp_sender.split_message') as mock_split, \
          patch('delivery.whatsapp_sender.rate_limiter') as mock_limiter, \
-         patch('delivery.whatsapp_sender._log_delivery_results', AsyncMock()):
+         patch('delivery.whatsapp_sender._log_delivery_results', AsyncMock()), \
+         patch('delivery.whatsapp_sender._mark_summaries_sent', AsyncMock()) as mock_mark:
         
         # Setup mocks
         mock_filter.return_value = summaries
@@ -216,7 +217,7 @@ async def test_send_digest_only_updates_last_sent_on_success(mock_subscriber, mo
         sent = await send_digest(subscribers, summaries, "morning")
         
         assert sent == 1
-        assert mock_session.commit.called
+        assert mock_mark.called
 
 
 @pytest.mark.asyncio

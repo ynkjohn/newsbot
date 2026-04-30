@@ -1,17 +1,17 @@
 import asyncio
 
 import structlog
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
 from config.settings import settings
-from config.time_utils import local_today
+from config.time_utils import local_today, utc_now
 from db.engine import async_session
 from db.models import VALID_CATEGORIES, NewsArticle, Summary
 from processor.categorizer import validate_category, validate_period
-from processor.llm_client import get_llm_client
+from processor.llm_client import LLMUsage, get_llm_client
 from processor.prompts import ARTICLE_BLOCK_TEMPLATE, SYSTEM_PROMPT_SUMMARY, USER_PROMPT_TEMPLATE
 from processor.summary_format import (
     SECTION_TITLES,
@@ -27,7 +27,7 @@ MAX_ARTICLES_PER_CATEGORY = 12
 
 class SummarySection(BaseModel):
     key: str
-    title: str
+    title: str = ""
     content: str = Field(min_length=40, max_length=1200)
 
     @field_validator("key")
@@ -38,13 +38,11 @@ class SummarySection(BaseModel):
             raise ValueError(f"invalid section key: {value}")
         return key
 
-    @field_validator("title")
-    @classmethod
-    def normalize_title(cls, value: str, info) -> str:
-        section_key = info.data.get("key")
-        fallback = SECTION_TITLES.get(section_key or "", "Seção")
-        title = str(value or "").strip()
-        return title or fallback
+    @model_validator(mode="after")
+    def set_fallback_title(self) -> "SummarySection":
+        if not self.title or not self.title.strip():
+            self.title = SECTION_TITLES.get(self.key, "Seção")
+        return self
 
 
 class DigestItemOutput(BaseModel):
@@ -80,6 +78,31 @@ class DigestItemOutput(BaseModel):
     @classmethod
     def normalize_label(cls, value: str) -> str:
         return " ".join(str(value or "").split()).strip().lower()
+
+    @field_validator("importance_score", mode="before")
+    @classmethod
+    def normalize_importance_score(cls, value: object) -> int:
+        if value is None or value == "":
+            return 3
+
+        if isinstance(value, str):
+            label_scores = {
+                "critical": 5,
+                "high": 5,
+                "medium": 3,
+                "low": 1,
+            }
+            normalized = value.strip().lower()
+            if normalized in label_scores:
+                return label_scores[normalized]
+            value = normalized.replace(",", ".")
+
+        try:
+            score = int(float(value))
+        except (TypeError, ValueError):
+            return 3
+
+        return max(1, min(5, score))
 
     @field_validator("command_hint")
     @classmethod
@@ -143,20 +166,69 @@ class SummaryOutput(BaseModel):
         return text
 
 
+def _item_payloads_with_article_ids(
+    items: list[DigestItemOutput],
+    loaded_articles: list[NewsArticle],
+) -> list[dict]:
+    article_id_by_index = {
+        index: article.id
+        for index, article in enumerate(loaded_articles, start=1)
+        if article.id is not None
+    }
+    valid_article_ids = set(article_id_by_index.values())
+
+    payloads: list[dict] = []
+    for item in items:
+        payload = item.model_dump()
+        source_article_ids = [
+            article_id
+            for article_id in payload.get("source_article_ids", [])
+            if isinstance(article_id, int) and article_id in valid_article_ids
+        ]
+        for source_index in payload.get("source_indexes", []):
+            article_id = article_id_by_index.get(source_index)
+            if article_id and article_id not in source_article_ids:
+                source_article_ids.append(article_id)
+        payload["source_article_ids"] = source_article_ids
+        payloads.append(payload)
+
+    return payloads
+
+
+def _attach_llm_usage(summary: Summary, usage: LLMUsage | None) -> None:
+    if not usage:
+        return
+    summary.token_count = usage.total_tokens
+    setattr(summary, "_llm_usage", usage.to_metadata())
+
+
 async def generate_summaries_for_category(
     articles: list[NewsArticle],
     period: str,
     model_override: str | None = None,
+    replace_existing: bool = False,
 ) -> Summary | None:
     if not articles:
         return None
 
-    category = articles[0].category
+    category = validate_category(articles[0].category)
     today = local_today()
     client = get_llm_client()
 
     article_ids = [article.id for article in articles]
     async with async_session() as session:
+        if not replace_existing:
+            existing = await session.execute(
+                select(Summary).where(
+                    Summary.category == category,
+                    Summary.period == period,
+                    Summary.date == today,
+                )
+            )
+            if existing.scalar_one_or_none():
+                logger.info(f"Summary for {category}/{period} on {today} already exists, skipping")
+                return None
+
         result = await session.execute(
             select(NewsArticle)
             .options(selectinload(NewsArticle.source))
@@ -183,17 +255,18 @@ async def generate_summaries_for_category(
     )
 
     try:
-        result = await client.chat_json_async(
+        result, llm_usage = await client.chat_json_async_with_usage(
             SYSTEM_PROMPT_SUMMARY,
             user_prompt,
+            max_tokens=8192,
             model_override=model_override,
         )
         validated = SummaryOutput(**result)
-    except ValueError as exc:
-        logger.error(f"LLM returned invalid JSON for {category}: {exc}")
-        return None
     except ValidationError as exc:
         logger.error(f"LLM output failed Pydantic validation for {category}: {exc}")
+        return None
+    except ValueError as exc:
+        logger.error(f"LLM returned invalid JSON for {category}: {exc}")
         return None
     except Exception as exc:
         logger.error(f"Failed to generate summary for {category}: {type(exc).__name__}: {exc}")
@@ -205,7 +278,7 @@ async def generate_summaries_for_category(
         bullets=validated.bullets,
         insight=validated.insight,
         sections=[section.model_dump() for section in validated.sections],
-        items=[item.model_dump() for item in validated.items],
+        items=_item_payloads_with_article_ids(validated.items, loaded_articles),
     )
     summary_text = render_summary_text(validated.category, validated.period, takeaways)
 
@@ -220,22 +293,36 @@ async def generate_summaries_for_category(
                 )
                 .with_for_update()
             )
-            if existing.scalar_one_or_none():
-                logger.info(f"Summary for {category}/{period} on {today} already exists, skipping")
-                return None
+            summary = existing.scalar_one_or_none()
+            replaced_existing = summary is not None
+            source_article_ids = [article.id for article in loaded_articles]
+            if summary:
+                if not replace_existing:
+                    logger.info(f"Summary for {category}/{period} on {today} already exists, skipping")
+                    return None
 
-            summary = Summary(
-                category=validated.category,
-                period=validated.period,
-                date=today,
-                summary_text=summary_text,
-                key_takeaways=takeaways,
-                source_article_ids=[article.id for article in loaded_articles],
-                model_used=model_override or client.model_name,
-            )
-            session.add(summary)
+                summary.summary_text = summary_text
+                summary.key_takeaways = takeaways
+                summary.source_article_ids = source_article_ids
+                summary.model_used = model_override or client.model_name
+                summary.created_at = utc_now()
+                summary.sent_at = None
+            else:
+                summary = Summary(
+                    category=validated.category,
+                    period=validated.period,
+                    date=today,
+                    summary_text=summary_text,
+                    key_takeaways=takeaways,
+                    source_article_ids=source_article_ids,
+                    model_used=model_override or client.model_name,
+                )
+                session.add(summary)
+
+            _attach_llm_usage(summary, llm_usage)
             await session.flush()
             await session.refresh(summary)
+            _attach_llm_usage(summary, llm_usage)
 
             await session.execute(
                 update(NewsArticle)
@@ -244,7 +331,8 @@ async def generate_summaries_for_category(
             )
 
             await session.commit()
-            logger.info(f"Created summary for {category}/{period} with {len(article_ids)} articles")
+            action = "Replaced" if replaced_existing else "Created"
+            logger.info(f"{action} summary for {category}/{period} with {len(article_ids)} articles")
             return summary
         except IntegrityError as exc:
             logger.warning(
@@ -260,10 +348,15 @@ async def generate_summaries_for_category(
             return None
 
 
-async def generate_all_summaries(articles: list[NewsArticle], period: str) -> list[Summary]:
+async def generate_all_summaries(
+    articles: list[NewsArticle],
+    period: str,
+    *,
+    replace_existing: bool = False,
+) -> list[Summary]:
     by_category: dict[str, list[NewsArticle]] = {}
     for article in articles:
-        by_category.setdefault(article.category, []).append(article)
+        by_category.setdefault(validate_category(article.category), []).append(article)
 
     model_pool = _build_summary_model_pool()
     model_semaphores = {model_name: asyncio.Semaphore(1) for model_name in model_pool}
@@ -279,6 +372,7 @@ async def generate_all_summaries(articles: list[NewsArticle], period: str) -> li
                 category_articles,
                 period,
                 model_override=model_name,
+                replace_existing=replace_existing,
             )
 
     tasks: list[asyncio.Task[Summary | None]] = []
@@ -302,7 +396,12 @@ async def generate_all_summaries(articles: list[NewsArticle], period: str) -> li
 
 
 def _build_summary_model_pool() -> list[str]:
-    models = [settings.llm_model_primary]
+    from processor.llm_config import get_active_llm_config
+    
+    config = get_active_llm_config()
+    models = [config.model]
+    
+    # Keeping secondary support if needed, but primary comes from dynamic config
     secondary = settings.llm_model_secondary.strip() if settings.llm_model_secondary else ""
     if secondary and secondary not in models:
         models.append(secondary)

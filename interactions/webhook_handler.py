@@ -1,5 +1,6 @@
 import structlog
 
+from core.whatsapp_identity import is_group_jid, strip_jid_suffix
 from db.engine import async_session
 from db.models import UserInteraction
 from interactions.command_handlers import handle_command
@@ -10,22 +11,13 @@ from interactions.subscriber_manager import get_or_create_subscriber
 logger = structlog.get_logger()
 
 
-def _normalize_remote_jid(remote_jid: str) -> str:
-    return (
-        remote_jid.replace("@s.whatsapp.net", "")
-        .replace("@lid", "")
-        .replace("@g.us", "")
-        .strip()
-    )
-
-
 async def handle_incoming_message(remote_jid: str, body: str) -> None:
-    is_group = remote_jid.endswith("@g.us")
+    is_group = is_group_jid(remote_jid)
     logger.info(f"Processing message from {remote_jid} (group={is_group}): {body[:30]}")
 
     try:
         message_type, detail = parse_message(body, is_group=is_group)
-        phone_for_db = _normalize_remote_jid(remote_jid)
+        phone_for_db = strip_jid_suffix(remote_jid)
         response = None
         command_target = remote_jid if is_group else phone_for_db
 

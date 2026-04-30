@@ -7,7 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-import app as app_module
+import routers.admin_api as admin_api_module
+import routers.dashboard as dashboard_module
+import routers.pipeline as pipeline_module
 from app import WhatsAppWebhookPayload, app
 from config.settings import settings
 
@@ -191,7 +193,7 @@ def test_digest_preview_uses_delivery_formatter(monkeypatch):
         async def execute(self, statement):
             return DummyResult()
 
-    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
+    monkeypatch.setattr(pipeline_module, "async_session", lambda: DummySession())
 
     response = client.get("/api/digest-preview/morning", headers=_get_admin_headers())
 
@@ -255,7 +257,7 @@ def test_legacy_last_24h_action_returns_digest_preview(monkeypatch):
         async def execute(self, statement):
             return DummyResult()
 
-    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
+    monkeypatch.setattr(pipeline_module, "async_session", lambda: DummySession())
 
     response = client.post("/api/run-pipeline/last-24h", headers=_get_admin_headers())
 
@@ -374,8 +376,8 @@ def test_dashboard_accepts_list_key_takeaways(monkeypatch):
                 return DummyResult(items=[])
             return DummyResult(rows=[])
 
-    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
-    monkeypatch.setattr(app_module, "fetch_whatsapp_status", AsyncMock(return_value={"status": "connected", "connected": True}))
+    monkeypatch.setattr(dashboard_module, "async_session", lambda: DummySession())
+    monkeypatch.setattr(dashboard_module, "fetch_whatsapp_status", AsyncMock(return_value={"status": "connected", "connected": True}))
 
     response = client.get("/api/dashboard", headers=_get_admin_headers())
     assert response.status_code == 200
@@ -466,8 +468,8 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
                 return DummyResult(items=[run])
             return DummyResult(rows=[(7, "https://example.com/a"), (9, "https://example.com/b")])
 
-    monkeypatch.setattr(app_module, "async_session", lambda: DummySession())
-    monkeypatch.setattr(app_module, "fetch_whatsapp_status", AsyncMock(return_value={"status": "connected", "connected": True}))
+    monkeypatch.setattr(dashboard_module, "async_session", lambda: DummySession())
+    monkeypatch.setattr(dashboard_module, "fetch_whatsapp_status", AsyncMock(return_value={"status": "connected", "connected": True}))
 
     response = client.get("/api/dashboard", headers=_get_admin_headers())
     assert response.status_code == 200
@@ -487,10 +489,11 @@ def test_dashboard_returns_source_urls_and_recent_runs(monkeypatch):
 def test_manual_pipeline_trigger(monkeypatch):
     captured = {}
 
-    async def fake_pipeline(request_id=None):
+    async def fake_pipeline(request_id=None, replace_existing_summaries=False):
         captured["request_id"] = request_id
+        captured["replace_existing_summaries"] = replace_existing_summaries
 
-    monkeypatch.setattr(app_module, "run_morning_pipeline", fake_pipeline)
+    monkeypatch.setattr(pipeline_module, "run_morning_pipeline", fake_pipeline)
 
     response = client.post("/run-pipeline/morning", headers=_get_admin_headers())
     assert response.status_code == 200
@@ -498,6 +501,7 @@ def test_manual_pipeline_trigger(monkeypatch):
     assert payload["status"] == "started"
     assert payload["run_id"]
     assert captured["request_id"] == payload["run_id"]
+    assert captured["replace_existing_summaries"] is True
 
 
 def test_manual_pipeline_invalid_period():
@@ -524,7 +528,7 @@ def test_llm_config_get_does_not_expose_api_key(monkeypatch, tmp_path):
             "api_key": "deepseek-secret",
         }
     )
-    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+    monkeypatch.setattr(admin_api_module, "get_llm_config_store", lambda: store)
 
     response = client.get("/api/llm-config", headers=_get_admin_headers())
 
@@ -542,8 +546,8 @@ def test_llm_config_post_saves_and_resets_client(monkeypatch, tmp_path):
 
     store = LLMConfigStore(path=tmp_path / "llm_config.json")
     reset_calls = []
-    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
-    monkeypatch.setattr(app_module, "reset_llm_client", lambda: reset_calls.append(True))
+    monkeypatch.setattr(admin_api_module, "get_llm_config_store", lambda: store)
+    monkeypatch.setattr(admin_api_module, "reset_llm_client", lambda: reset_calls.append(True))
 
     response = client.post(
         "/api/llm-config",
@@ -566,7 +570,7 @@ def test_llm_config_post_rejects_invalid_provider(monkeypatch, tmp_path):
     from processor.llm_config import LLMConfigStore
 
     store = LLMConfigStore(path=tmp_path / "llm_config.json")
-    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+    monkeypatch.setattr(admin_api_module, "get_llm_config_store", lambda: store)
 
     response = client.post(
         "/api/llm-config",
@@ -583,7 +587,7 @@ async def test_llm_config_test_endpoint_uses_unsaved_payload(monkeypatch, tmp_pa
     from processor.llm_config import LLMConfigStore
 
     store = LLMConfigStore(path=tmp_path / "llm_config.json")
-    monkeypatch.setattr(app_module, "get_llm_config_store", lambda: store)
+    monkeypatch.setattr(admin_api_module, "get_llm_config_store", lambda: store)
 
     async def fake_test_llm_config(config):
         assert config.provider == "deepseek"
@@ -591,7 +595,7 @@ async def test_llm_config_test_endpoint_uses_unsaved_payload(monkeypatch, tmp_pa
         assert config.api_key == "deepseek-secret"
         return "ok"
 
-    monkeypatch.setattr(app_module, "test_llm_config", fake_test_llm_config)
+    monkeypatch.setattr(admin_api_module, "test_llm_config", fake_test_llm_config)
 
     response = client.post(
         "/api/llm-config/test",

@@ -1,0 +1,180 @@
+Perfeito — fiz uma análise estrutural do projeto com foco em refatorações de impacto real (confiabilidade, custo operacional, manutenção e risco de regressão), separando de ajustes apenas estéticos.
+
+Escopo analisado: orquestração da pipeline, integração com LLM, entrega WhatsApp, webhook/interações, configuração e modelo de dados.
+Sem alterações de código nesta etapa (como você pediu).
+
+Lista priorizada (impacto × risco × ordem)
+1) Quebrar run_pipeline em etapas transacionais com contrato único de erro/resultado (Alta prioridade)
+Por que é dívida técnica real: a função central está grande, com muitos try/except aninhados, repetição de atualização de estado e retorno precoce em vários caminhos — isso aumenta chance de inconsistência de status e dificulta teste por etapa. scheduler/jobs.py concentra coleta, deduplicação, extração, sumarização e entrega num fluxo monolítico. 
+
+Impacto: Muito alto (observabilidade, testabilidade, menor risco de incidentes silenciosos).
+
+Risco: Médio (núcleo crítico).
+
+Ordem sugerida: 1º.
+
+Refatoração: criar “step runners” (fetch_step, dedup_step, etc.) que retornem um objeto padrão (ok, payload, error_code, error_message) e um coordenador simples que persiste eventos de forma uniforme.
+
+2) Eliminar padrão N+1 de commits no envio e no fetch de feeds (Alta prioridade)
+Por que é dívida técnica real: há operações por item que abrem sessão/commit repetidamente:
+
+marcação de Summary.sent_at com loop de session.get por ID. 
+
+marcação de sucesso/falha de feed por fonte em chamadas separadas (podendo amplificar I/O de banco em carga). 
+
+Impacto: Alto (performance, latência da pipeline e contenção de DB).
+
+Risco: Baixo–médio (mudança localizada).
+
+Ordem sugerida: 2º.
+
+Refatoração: usar UPDATE ... WHERE id IN (...)/batch updates e reduzir commits por ciclo lógico.
+
+3) Unificar normalização/whitelist de JID/telefone em módulo único (Alta prioridade)
+Por que é dívida técnica real: a lógica de normalização e decisão de destino aparece em vários pontos com regras parcialmente duplicadas:
+
+_allowed_remote_jid em app.py. 
+
+_normalize_remote_jid no webhook. 
+
+_format_phone, _subscriber_destination_key, filtros em delivery. 
+
+Isso é fonte clássica de bug de autorização/entrega divergente entre entrada e saída.
+
+Impacto: Alto (correção funcional + segurança operacional).
+
+Risco: Médio.
+
+Ordem sugerida: 3º.
+
+Refatoração: criar phone_identity.py com funções puras reutilizadas por app/webhook/delivery e testes parametrizados únicos.
+
+4) Separar camada de domínio da camada HTTP em app.py (Média-alta prioridade)
+Por que é dívida técnica real: app.py mistura bootstrap, agendamento, rotas admin, validação de payload, chamadas externas e gatilho de pipeline. 
+
+Impacto: Alto para manutenção e onboarding.
+
+Risco: Médio.
+
+Ordem sugerida: 4º.
+
+Refatoração: extrair routers (admin_router, pipeline_router, webhook_router) e services (ex.: pipeline_service.trigger_manual_run), mantendo app.py só como composição.
+
+5) Endurecer fronteira síncrono/assíncrono no cliente LLM (Média prioridade)
+Por que é dívida técnica real: LLMClient expõe APIs sync e async, incluindo manipulação de event loop com fallback de new_event_loop; isso é propenso a comportamento inesperado em ambientes ASGI/testes concorrentes. 
+
+Impacto: Médio-alto (estabilidade em runtime).
+
+Risco: Médio.
+
+Ordem sugerida: 5º.
+
+Refatoração: tornar API interna “async-first”; manter adapter sync apenas em boundary explícita (CLI/scripts), não no core web.
+
+6) Consolidar enums/constantes de domínio (period, categorias, status) (Média prioridade)
+Por que é dívida técnica real: strings de domínio espalhadas em múltiplos módulos ("morning", "midday", categorias, status), elevando risco de typo e divergência de comportamento. 
+
+Impacto: Médio.
+
+Risco: Baixo.
+
+Ordem sugerida: 6º.
+
+Refatoração: Enum/constantes centralizadas com validadores compartilhados e conversores.
+
+7) Contratos tipados para payloads intermediários da pipeline (Média prioridade)
+Por que é dívida técnica real: várias funções trocam dict “solto” para entradas de feed/artigo; isso reduz segurança de refatoração e dificulta evolução. Ex.: fetch retorna list[dict]. 
+
+Impacto: Médio.
+
+Risco: Baixo–médio.
+
+Ordem sugerida: 7º.
+
+Refatoração: introduzir dataclasses/pydantic models internos (FeedEntry, ExtractedArticleInput) para contratos explícitos.
+
+8) Estratégia de logging estruturado com contexto estável por run/request (Média prioridade)
+Por que é dívida técnica real: há logs úteis, mas majoritariamente com f-string; sem contexto consistente (run_id, period, step) em todos os pontos, análise pós-incidente fica mais cara. 
+
+Impacto: Médio.
+
+Risco: Baixo.
+
+Ordem sugerida: 8º.
+
+Refatoração: bind contextual (logger.bind(run_id=..., period=...)) e mensagens com campos estruturados.
+
+9) Revisão de modelagem JSON no SQLite para campos críticos (Média-baixa prioridade)
+Por que é dívida técnica real: campos como key_takeaways, source_article_ids, event_metadata em JSON são práticos, mas podem limitar consultas analíticas e integridade referencial se crescer o uso operacional. 
+
+Impacto: Médio (depende de roadmap de analytics/auditoria).
+
+Risco: Médio-alto (migração de schema).
+
+Ordem sugerida: 9º.
+
+Refatoração: manter JSON para dados flexíveis, mas normalizar parte que virou operacional (ex.: associação summary↔article já existe parcialmente via summary_id).
+
+10) Ajustes de timeout/retry externalizados por configuração (Baixa-média prioridade)
+Por que é dívida técnica real: timeouts e backoffs críticos estão hardcoded em múltiplos módulos. 
+
+Impacto: Médio em operação (tuning sem deploy).
+
+Risco: Baixo.
+
+Ordem sugerida: 10º.
+
+Refatoração: mover para settings com defaults seguros e validação.
+
+O que é dívida técnica real vs estética
+Dívida técnica real (recomendo executar)
+Pipeline monolítica com tratamento de erro duplicado (item 1).
+
+I/O de banco subótimo com commits por item (item 2).
+
+Regras duplicadas de identidade/whitelist de WhatsApp (item 3).
+
+Fronteira sync/async frágil no cliente LLM (item 5).
+
+Strings de domínio espalhadas sem centralização (item 6).
+
+Contratos dict frouxos entre etapas (item 7).
+
+Logging sem contexto consistente de correlação (item 8).
+
+Mais “preferência/estilo” (baixo retorno isolado)
+Renomeações cosméticas de funções/módulos sem mudança de arquitetura.
+
+Troca de estilo de logs (f-string vs %s) sem padronização contextual.
+
+Reorganização de imports/ordem de métodos apenas por estética.
+
+Ordem de execução recomendada (prática)
+Segurança funcional primeiro: item 3 (JID/telefone único)
+
+Confiabilidade core: item 1 (quebrar pipeline em steps)
+
+Performance operacional: item 2 (batch DB updates)
+
+Estabilidade runtime: item 5 (async-first LLM)
+
+Padronização de domínio: item 6 + item 7
+
+Operação/observabilidade: item 8 + item 10
+
+Modelagem avançada (se necessário): item 9
+
+Se quiser, no próximo passo eu te entrego um plano de refatoração em sprints (ex.: Sprint 1 = baixo risco/alto retorno) com estimativa de esforço e testes de regressão por item.
+
+Comandos executados na análise
+✅ pwd && rg --files -g 'AGENTS.md'
+
+✅ rg --files | head -n 200
+
+✅ sed -n '1,220p' app.py; sed -n '1,260p' config/settings.py; sed -n '1,260p' db/models.py
+
+✅ sed -n '1,320p' scheduler/jobs.py; sed -n '1,260p' processor/llm_client.py; sed -n '1,260p' interactions/webhook_handler.py; sed -n '1,260p' delivery/whatsapp_sender.py
+
+✅ sed -n '1,260p' interactions/command_router.py; sed -n '1,260p' interactions/command_handlers.py; sed -n '1,260p' processor/summarizer.py; sed -n '1,220p' collector/rss_fetcher.py
+
+✅ nl -ba app.py | sed -n '1,260p'; nl -ba scheduler/jobs.py | sed -n '1,320p'; nl -ba delivery/whatsapp_sender.py | sed -n '1,260p'; nl -ba interactions/webhook_handler.py | sed -n '1,220p'; nl -ba config/settings.py | sed -n '1,220p'; nl -ba processor/llm_client.py | sed -n '1,280p'; nl -ba processor/summarizer.py | sed -n '1,320p'; nl -ba collector/rss_fetcher.py | sed -n '1,220p'; nl -ba db/models.py | sed -n '1,280p'

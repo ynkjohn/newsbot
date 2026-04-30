@@ -1,0 +1,182 @@
+Excelente pedido — fiz uma leitura arquitetural e de pontos críticos do código para separar refatoração que gera valor real de preferência estética.
+
+Escopo: análise apenas (sem alterar arquivos).
+Critério de priorização: impacto no negócio/operação, risco técnico, e sequência ideal de execução.
+
+Como analisei
+Comandos usados
+✅ rg --files | head
+
+✅ find .. -name AGENTS.md -print
+
+✅ sed -n '1,220p' app.py
+
+✅ sed -n '1,240p' config/settings.py
+
+✅ sed -n '1,260p' scheduler/jobs.py
+
+✅ sed -n '1,260p' interactions/webhook_handler.py
+
+✅ sed -n '1,260p' interactions/command_router.py
+
+✅ python - <<'PY' ... (script AST para localizar funções longas)
+
+✅ sed -n '1,260p' processor/summarizer.py
+
+✅ sed -n '1,240p' processor/llm_client.py
+
+✅ sed -n '1,260p' interactions/dashboard_data.py
+
+✅ sed -n '1,260p' interactions/question_handler.py
+
+✅ sed -n '1,240p' delivery/whatsapp_sender.py
+
+✅ nl -ba ... (mapeamento com linhas para evidências)
+
+Lista priorizada de oportunidades reais de refatoração
+P0 — Alto impacto, baixo/médio risco (fazer primeiro)
+Quebrar o orquestrador monolítico do pipeline em etapas explícitas
+
+Problema real: _run_pipeline_impl concentra 265 linhas com múltiplas responsabilidades (coleta, dedup, extração, sumarização, entrega, persistência de eventos, alertas, status), dificultando manutenção, teste isolado e evolução.
+
+Evidência: função única gigante com controle de fluxo e tratamento de erro repetitivo. 
+
+Impacto: muito alto (confiabilidade operacional + velocidade de mudança).
+
+Risco: médio (é coração da aplicação).
+
+Refatoração sugerida: pipeline por “steps” (ex.: fetch_step, dedup_step, extract_step, summarize_step, deliver_step) com contrato de entrada/saída e padronização de erro/evento.
+
+Padronizar “normalização de identificador WhatsApp” em utilitário único
+
+Problema real: regras de normalização/whitelist/destino estão espalhadas e duplicadas em vários módulos, com risco de comportamento divergente (ex.: jid de grupo vs usuário, sufixos @s.whatsapp.net, @lid, @g.us).
+
+Evidência: lógica duplicada em _allowed_remote_jid, _normalize_remote_jid, _format_phone, _subscriber_destination_key, _filter_delivery_subscribers. 
+
+Impacto: alto (evita bugs de entrega/segurança operacional).
+
+Risco: baixo/médio.
+
+Refatoração sugerida: criar utils/whatsapp_ids.py com funções puras e cobertas por testes.
+
+Extrair camada de “resiliência HTTP” compartilhada (retry/backoff/timeout)
+
+Problema real: política de retry/backoff aparece em múltiplos pontos com variações (LLM e WhatsApp), aumentando inconsistência e custo de manutenção.
+
+Evidência: _call_with_retry no LLM + retries manuais em _send_whatsapp_message e send_digest. 
+
+Impacto: alto (robustez + observabilidade + tuning centralizado).
+
+Risco: médio.
+
+Refatoração sugerida: policy comum (RetryPolicy) + wrappers reutilizáveis.
+
+P1 — Alto valor, risco médio (segundo bloco)
+Reduzir acoplamento entre “domínio” e “persistência” no envio
+
+Problema real: send_digest mistura formatação, throttling, tentativa de entrega e persistência de resultados; difícil testar regras sem banco/infra.
+
+Evidência: função com fluxo completo e side effects de DB no mesmo módulo. 
+
+Impacto: alto (testabilidade e menos regressão).
+
+Risco: médio.
+
+Refatoração sugerida: separar em DeliveryPlanner (puro), DeliveryTransport, DeliveryRecorder.
+
+Transformar construção do dashboard em “query service” modular
+
+Problema real: build_dashboard_payload é função extensa e multifuncional (KPIs, cards, health, runs, serialização), com regra de negócio e acesso a dados misturados.
+
+Evidência: função longa e utilitários acoplados no mesmo arquivo. 
+
+Impacto: alto (dashboard tende a crescer).
+
+Risco: médio/baixo.
+
+Refatoração sugerida: dividir em componentes (SummaryCardsService, RunTimelineService, HealthScoreService) e DTOs.
+
+Eliminar chamadas a método “interno” do LLM client fora da interface pública
+
+Problema real: question_handler chama client._chat_async (método interno), quebrando encapsulamento e dificultando evolução segura da API do cliente.
+
+Evidência: acesso direto a _chat_async. 
+
+Impacto: médio/alto (manutenibilidade e contratos).
+
+Risco: baixo.
+
+Refatoração sugerida: expor método público assíncrono estável (chat_async) e migrar chamadores.
+
+P2 — Valor moderado, risco baixo (depois)
+Extrair heurísticas de NLP de perguntas para um módulo declarativo
+
+Problema real: listas de padrões e heurísticas textuais hardcoded em question_handler e command_router; isso cresce mal e gera comportamento difícil de calibrar.
+
+Evidência: múltiplos detectores por substring/listas embutidas. 
+
+Impacto: médio.
+
+Risco: baixo.
+
+Refatoração sugerida: mover regras para estrutura declarativa/versionável (YAML/JSON ou constantes centralizadas com testes parametrizados).
+
+Padronizar modelo de erros por etapa (status + código + contexto)
+
+Problema real: mensagens de erro textuais livres em vários trechos dificultam agregação/alerta/analytics.
+
+Evidência: múltiplos error_log=f"...{type(e).__name__}" e mensagens sem enum comum. 
+
+Impacto: médio (observabilidade).
+
+Risco: baixo.
+
+Refatoração sugerida: PipelineErrorCode + payload estruturado.
+
+Consolidar validações e DTOs de webhook/entrada fora de app.py
+
+Problema real: modelos Pydantic de webhook no arquivo principal aumentam acoplamento da camada HTTP com bootstrap/scheduler.
+
+Evidência: WhatsAppWebhookPayload e validadores definidos no mesmo arquivo da aplicação e rotas. 
+
+Impacto: médio/baixo.
+
+Risco: baixo.
+
+Refatoração sugerida: mover para interactions/schemas.py e manter app.py como composição.
+
+O que é dívida técnica real vs. estética
+Dívida técnica real (recomendo tratar)
+Funções “god function” com alto acoplamento e side effects múltiplos (_run_pipeline_impl, build_dashboard_payload, send_digest). 
+
+Duplicação de regra crítica de identificação de destinatário WhatsApp. 
+
+Encapsulamento quebrado com uso de método interno (_chat_async) fora do cliente. 
+
+Estratégias de retry inconsistentes e dispersas. 
+
+Preferência estética (não prioritário agora)
+Renomear variáveis para “mais bonitas”.
+
+Trocar estilo de logging/f-strings sem ganho operacional.
+
+Reorganizar imports/ordem de funções sem impacto real.
+
+“Micro-cleanups” de sintaxe que não reduzem risco nem aumentam cobertura.
+
+Ordem de execução recomendada (prática)
+Unificar normalização/roteamento de IDs WhatsApp (baixo risco, ganho rápido).
+
+Refatorar _run_pipeline_impl por etapas com contratos (maior ganho estrutural).
+
+Padronizar retry/backoff em camada comum.
+
+Separar send_digest em planner/transport/recorder.
+
+Modularizar build_dashboard_payload.
+
+Ajustar API pública do LLM client e remover uso de _chat_async externo.
+
+Consolidar heurísticas NLP e erros estruturados.
+
+Se quiser, no próximo passo eu já te entrego um plano de refatoração em milestones (M1/M2/M3) com esforço estimado, risco de regressão por módulo e estratégia de testes para cada etapa.

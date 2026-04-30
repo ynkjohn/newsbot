@@ -16,6 +16,9 @@ Regras obrigatórias:
 - As seções devem aprofundar a leitura sem repetir os bullets.
 - Inclua items estruturados para as principais notícias/eventos, preservando command_hint curto e específico para consulta no WhatsApp.
 - command_hint deve começar com !, ter no máximo 50 caracteres, não conter espaços e não usar comandos genéricos por posição como !1 ou !2.
+- importance_score deve ser um número inteiro de 1 a 5.
+- source_indexes deve listar os números dos ARTIGOS usados como base para cada item.
+- Deixe source_article_ids vazio; o sistema preencherá esse campo a partir de source_indexes.
 - Use nomes concretos, datas e números quando existirem no material.
 
 Categorias válidas:
@@ -104,6 +107,8 @@ Corrija e reenviar obedecendo estas regras:
 - bullets deve ser uma lista de strings.
 - sections deve ser uma lista de objetos com key, title e content.
 - items deve ser uma lista de objetos com event_key, title, why_it_matters, what_happened, watchlist, source_indexes, source_article_ids, importance, importance_score, novelty, sentiment, material_change, trust_status e command_hint.
+- importance_score deve ser inteiro entre 1 e 5.
+- source_indexes deve apontar para os números dos ARTIGOS usados; source_article_ids deve ficar vazio.
 - command_hint deve começar com !, ser curto, específico e sem espaços.
 - Não inclua URLs."""
 

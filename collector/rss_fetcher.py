@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import hashlib
+from urllib.parse import urlparse
 
 import feedparser
 import httpx
@@ -10,9 +11,22 @@ from sqlalchemy import select
 from config.time_utils import utc_now
 from db.engine import async_session
 from db.models import FeedSource
+from processor.categorizer import validate_category
 
 logger = structlog.get_logger()
 MAX_CONCURRENT_FEEDS = 6
+
+METROPOLES_POLITICS_DENY_PATHS = (
+    "/celebridades/",
+    "/entretenimento/",
+    "/esportes/",
+    "/mundo/",
+    "/saude/",
+    "/vida-e-estilo/",
+    "/colunas/fabia-oliveira/",
+    "/colunas/ilca-maria-estevao/",
+    "/colunas/lucas-pasin/",
+)
 
 
 async def fetch_all_feeds(hours: int = 12) -> list[dict]:
@@ -50,17 +64,26 @@ async def _fetch_source_entries(
                 if published and published < cutoff:
                     continue
 
-                entries.append(
-                    {
-                        "source_id": source.id,
-                        "source_name": source.name,
-                        "category": source.category,
-                        "url": entry.get("link", ""),
-                        "title": entry.get("title", ""),
-                        "description": entry.get("summary", ""),
-                        "published_at": published or utc_now(),
-                    }
-                )
+                entry_data = {
+                    "source_id": source.id,
+                    "source_name": source.name,
+                    "category": validate_category(source.category),
+                    "url": entry.get("link", ""),
+                    "title": entry.get("title", ""),
+                    "description": entry.get("summary", ""),
+                    "published_at": published or utc_now(),
+                }
+                if not should_keep_feed_entry(entry_data):
+                    logger.debug(
+                        "Skipping off-topic feed entry",
+                        source=source.name,
+                        category=entry_data["category"],
+                        title=entry_data["title"],
+                        url=entry_data["url"],
+                    )
+                    continue
+
+                entries.append(entry_data)
 
             await _mark_feed_success(source.id)
             return entries
@@ -79,6 +102,17 @@ def _parse_published(entry) -> datetime.datetime | None:
             except Exception:
                 continue
     return None
+
+
+def should_keep_feed_entry(entry: dict) -> bool:
+    source_name = str(entry.get("source_name") or "").strip().lower()
+    category = validate_category(str(entry.get("category") or ""))
+    url_path = urlparse(str(entry.get("url") or "")).path.lower()
+
+    if source_name == "metropoles" and category == "politica-brasil":
+        return not any(deny_path in url_path for deny_path in METROPOLES_POLITICS_DENY_PATHS)
+
+    return True
 
 
 async def _mark_feed_success(source_id: int) -> None:

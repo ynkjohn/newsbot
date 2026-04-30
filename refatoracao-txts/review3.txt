@@ -1,0 +1,170 @@
+Perfeito — fiz uma análise técnica do projeto sem alterar arquivos e foquei em oportunidades reais de refatoração (não cosméticas), com priorização por impacto, risco e ordem de execução.
+
+Escopo analisado
+Revisei principalmente os pontos de orquestração (API + pipeline), entrega WhatsApp e testes relacionados, que concentram complexidade e risco operacional..
+
+Lista priorizada (impacto × risco × sequência)
+1) Extrair camadas de serviço do app.py (API está “god file”)
+Impacto: Alto
+
+Risco: Médio
+
+Ordem: 1º
+
+Por quê: app.py está com ~522 linhas e mistura: bootstrap, scheduler, autenticação, regras de whitelist, consultas SQL, endpoints administrativos e webhook. Isso dificulta testes isolados, aumenta acoplamento e custo de mudança.
+
+Refatoração sugerida:
+
+criar módulos: api/admin_routes.py, api/webhook_routes.py, services/dashboard_service.py, services/subscriber_service.py, services/feed_service.py;
+
+manter no app.py apenas criação do app, registro de routers e lifespan.
+
+Ganho real: reduz risco de regressão em mudanças simples de endpoint e facilita cobertura de testes unitários por domínio.
+
+2) Quebrar run_pipeline em “step runner” com transação/evento padronizados
+Impacto: Muito alto
+
+Risco: Médio/Alto
+
+Ordem: 2º
+
+Por quê: o pipeline concentra fluxo crítico em uma função longa com repetição de blocos try/except, logs, update de status e eventos por etapa. Isso favorece inconsistência entre etapas e bugs de manutenção.
+
+Refatoração sugerida:
+
+criar abstração tipo run_step(step_name, coro, timeout, on_error, metadata);
+
+unificar registro de eventos e atualização de PipelineRun em um único ponto;
+
+transformar etapas em funções curtas e testáveis (fetch, dedup, extract, summarize, deliver).
+
+Ganho real: melhora confiabilidade operacional, observabilidade e reduz código duplicado de tratamento de falha.
+
+3) Reduzir padrão N+1 em atualização/gravação de entrega
+Impacto: Alto
+
+Risco: Médio
+
+Ordem: 3º
+
+Por quê: _mark_summaries_sent faz session.get por summary_id em loop; _log_delivery_results grava linha por linha. Em escala, gera I/O desnecessário e latência de envio maior.
+
+Refatoração sugerida:
+
+usar update(Summary).where(Summary.id.in_(...)).values(sent_at=...);
+
+usar bulk insert/session.execute(insert(...), values) para DeliveryLog.
+
+Ganho real: ganho de performance e redução de carga em banco durante disparos.
+
+4) Unificar normalização/whitelist de destinatários (duplicação de regra de JID)
+Impacto: Médio/Alto
+
+Risco: Baixo/Médio
+
+Ordem: 4º
+
+Por quê: há lógica parecida de normalização/allowlist em lugares diferentes (_allowed_remote_jid no app e _filter_delivery_subscribers + helpers no sender). Divergência futura pode bloquear mensagens válidas ou liberar indevidas.
+
+Refatoração sugerida: criar módulo único de identidade de contato (contacts.py) com:
+
+parse/normalize;
+
+comparação por chave canônica;
+
+regra única de allowlist.
+
+Ganho real: consistência de segurança e menor chance de bug intermitente em produção.
+
+5) Separar retry/backoff em componente reutilizável
+Impacto: Médio
+
+Risco: Baixo
+
+Ordem: 5º
+
+Por quê: retry aparece em múltiplos pontos com arrays de delay hardcoded ([1,5,10]) e sem política centralizada. Isso dificulta tunning e observabilidade por tipo de falha.
+
+Refatoração sugerida: criar utilitário retry_async(policy=...) com:
+
+exceções retryáveis;
+
+jitter opcional;
+
+hooks de log/métricas.
+
+Ganho real: previsibilidade operacional e menor duplicação.
+
+6) Fortalecer fronteira de domínio entre router de comandos e handlers
+Impacto: Médio
+
+Risco: Baixo
+
+Ordem: 6º
+
+Por quê: handle_command usa cadeia de if e mistura fallback com drilldown; cresce mal conforme novos comandos entram.
+
+Refatoração sugerida: estratégia por mapa {command_type: handler} + contratos explícitos de retorno.
+
+Ganho real: escalabilidade de features de interação sem aumentar complexidade ciclomática.
+
+Dívida técnica real vs preferência estética
+✅ Dívida técnica real (priorizar)
+app.py monolítico com múltiplas responsabilidades.
+
+Pipeline crítico concentrado e repetitivo em tratamento de falhas/eventos.
+
+Ineficiência de acesso ao banco no fluxo de entrega (potencial gargalo).
+
+Duplicação de regras de normalização/allowlist de JID.
+
+Política de retry espalhada e não padronizada.
+
+🎨 Preferência estética (pode esperar)
+Padronizar idioma dos logs/mensagens (PT/EN misturado) — útil, mas não bloqueante técnico.
+
+Reorganização “bonita” de imports locais dentro de funções — impacto baixo isoladamente.
+
+Renomeações cosméticas de funções/variáveis sem mudança de responsabilidade.
+
+Ordem de execução recomendada (roadmap enxuto)
+Fase 1 (baixo risco, alto retorno): unificar normalização/allowlist + componente de retry.
+
+Fase 2: extração de serviços do app.py mantendo contratos HTTP atuais.
+
+Fase 3: refatorar pipeline para step-runner e padronizar telemetria de etapas.
+
+Fase 4: otimizações SQL de entrega (bulk update/insert), com testes de regressão/performance.
+
+Comandos usados nesta análise
+✅ pwd && rg --files | head
+
+✅ find .. -name AGENTS.md -print
+
+✅ rg --files
+
+✅ sed -n '1,220p' pyproject.toml
+
+✅ sed -n '1,260p' app.py
+
+✅ sed -n '1,260p' scheduler/jobs.py
+
+✅ sed -n '260,620p' app.py && sed -n '260,620p' scheduler/jobs.py
+
+✅ sed -n '1,260p' config/settings.py
+
+✅ sed -n '1,260p' delivery/whatsapp_sender.py
+
+✅ sed -n '1,260p' processor/summarizer.py
+
+✅ wc -l app.py scheduler/jobs.py interactions/command_handlers.py interactions/command_router.py && sed -n '1,260p' interactions/command_handlers.py
+
+✅ nl -ba app.py | sed -n '1,220p'
+
+✅ nl -ba scheduler/jobs.py | sed -n '1,260p'
+
+✅ nl -ba delivery/whatsapp_sender.py | sed -n '1,260p'
+
+✅ nl -ba app.py | sed -n '220,520p' && nl -ba tests/test_webhook.py | sed -n '1,260p' && nl -ba tests/test_whatsapp_sender.py | sed -n '1,260p'
+
+Se você quiser, no próximo passo eu posso transformar isso em um plano de execução sprintável (tickets com esforço estimado, dependências e critério de aceite por item).

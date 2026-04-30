@@ -52,6 +52,11 @@ class TestValidateCategory:
         assert validate_category("TECH") == "tech"
         assert validate_category("Economia-Brasil") == "economia-brasil"
 
+    def test_validate_category_legacy_world_aliases(self):
+        """Previous international category names should map to current world categories."""
+        assert validate_category("economia-internacional") == "economia-mundao"
+        assert validate_category("politica-internacional") == "politica-mundao"
+
     def test_validate_category_fuzzy_match(self):
         """Should fuzzy match if close to valid category."""
         # If "tech" is valid, "tecnologia" should fuzzy match

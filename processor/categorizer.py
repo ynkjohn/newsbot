@@ -1,10 +1,16 @@
 from db.models import VALID_CATEGORIES
 
+LEGACY_CATEGORY_ALIASES = {
+    "economia-internacional": "economia-mundao",
+    "politica-internacional": "politica-mundao",
+}
+
 
 def validate_category(category: str) -> str:
     """Validate and normalize a category string. Returns the category if valid,
     or the closest match if slightly off."""
     category = category.strip().lower()
+    category = LEGACY_CATEGORY_ALIASES.get(category, category)
 
     if category in VALID_CATEGORIES:
         return category

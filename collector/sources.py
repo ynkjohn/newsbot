@@ -1,7 +1,8 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from db.engine import async_session
-from db.models import FeedSource
+from db.models import FeedSource, NewsArticle, Summary
+from processor.categorizer import LEGACY_CATEGORY_ALIASES, validate_category
 
 SEED_FEEDS = [
     # Política Brasil
@@ -33,21 +34,40 @@ SEED_FEEDS = [
 
 
 async def sync_seed_feeds() -> int:
-    """Insert missing seed feeds into the database and return count of inserted ones."""
+    """Insert/update seed feeds and normalize legacy category names."""
     async with async_session() as session:
-        result = await session.execute(select(FeedSource.url))
-        existing_urls = set(result.scalars().all())
+        result = await session.execute(select(FeedSource))
+        existing_by_url = {source.url: source for source in result.scalars().all()}
 
-        inserted_count = 0
+        changed_count = 0
         for feed_data in SEED_FEEDS:
-            if feed_data["url"] not in existing_urls:
-                source = FeedSource(**feed_data)
+            normalized_feed = {**feed_data, "category": validate_category(feed_data["category"])}
+            source = existing_by_url.get(normalized_feed["url"])
+            if source is None:
+                source = FeedSource(**normalized_feed)
                 session.add(source)
-                inserted_count += 1
+                changed_count += 1
+                continue
 
-        if inserted_count > 0:
+            if source.name != normalized_feed["name"]:
+                source.name = normalized_feed["name"]
+                changed_count += 1
+            if source.category != normalized_feed["category"]:
+                source.category = normalized_feed["category"]
+                changed_count += 1
+
+        for legacy, canonical in LEGACY_CATEGORY_ALIASES.items():
+            for model in (FeedSource, NewsArticle, Summary):
+                result = await session.execute(
+                    update(model)
+                    .where(model.category == legacy)
+                    .values(category=canonical)
+                )
+                changed_count += result.rowcount or 0
+
+        if changed_count > 0:
             await session.commit()
-        return inserted_count
+        return changed_count
 
 
 async def seed_feeds_if_empty() -> None:

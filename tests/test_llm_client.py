@@ -44,7 +44,7 @@ async def test_llm_timeout_retry(llm_client):
     
     llm_client._primary.chat.completions.create = side_effect
     
-    result = await llm_client._chat_async("system", "user")
+    result = await llm_client.chat_async("system", "user")
     assert result == "Success!"
     assert call_count[0] == 3  # Should have been called 3 times
 
@@ -69,7 +69,7 @@ async def test_llm_rate_limit_retry(llm_client):
     
     llm_client._primary.chat.completions.create = side_effect
     
-    result = await llm_client._chat_async("system", "user")
+    result = await llm_client.chat_async("system", "user")
     assert result == "Success after timeout!"
     assert call_count[0] == 2  # Should have retried
 
@@ -135,10 +135,46 @@ async def test_llm_fallback_on_primary_failure(llm_client):
     fallback_response.choices[0].message.content = "Fallback response"
     llm_client._fallback.chat.completions.create = MagicMock(return_value=fallback_response)
     
-    result = await llm_client._chat_async("system", "user")
+    result = await llm_client.chat_async("system", "user")
     assert result == "Fallback response"
     llm_client._fallback.chat.completions.create.assert_called()
     assert llm_client._fallback.chat.completions.create.call_args.kwargs["model"] == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_async_with_usage_estimates_deepseek_cost(monkeypatch):
+    monkeypatch.setattr(
+        "processor.llm_client.get_active_llm_config",
+        lambda: LLMRuntimeConfig(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+            api_keys={"deepseek": "deepseek-key"},
+        ),
+    )
+    with patch("processor.llm_client.OpenAI"):
+        client = LLMClient()
+
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = "ok"
+    response.usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 500,
+        "total_tokens": 1500,
+        "prompt_cache_hit_tokens": 200,
+        "prompt_cache_miss_tokens": 800,
+    }
+    client._primary.chat.completions.create = MagicMock(return_value=response)
+
+    result = await client.chat_async_with_usage("system", "user")
+
+    assert result.content == "ok"
+    assert result.usage is not None
+    assert result.usage.total_tokens == 1500
+    assert result.usage.prompt_cache_hit_tokens == 200
+    assert result.usage.prompt_cache_miss_tokens == 800
+    assert result.usage.estimated_cost_usd == pytest.approx(0.00025256)
 
 
 def test_llm_client_uses_active_deepseek_config(monkeypatch):

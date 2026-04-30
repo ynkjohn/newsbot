@@ -69,7 +69,7 @@ async def handle_question(phone_number: str, question: str, is_group: bool = Fal
 
     client = get_llm_client()
     try:
-        response = await client._chat_async(
+        response = await client.chat_async(
             system_prompt=system_prompt,
             user_prompt=normalized_question,
             max_tokens=max_tokens,

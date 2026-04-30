@@ -1,0 +1,202 @@
+Perfeito — fiz uma análise técnica do projeto sem alterar arquivos, como você pediu.
+
+Usei leitura direta dos módulos centrais (API, pipeline, webhook, envio WhatsApp, config e LLM client) para focar em refatorações com ganho real de confiabilidade/manutenção.
+
+Escopo analisado
+API e orquestração: app.py.
+
+Pipeline principal: scheduler/jobs.py.
+
+Entrada de mensagens/webhook: interactions/webhook_handler.py.
+
+Cliente LLM: processor/llm_client.py.
+
+Envio WhatsApp: delivery/whatsapp_sender.py.
+
+Configuração: config/settings.py.
+
+Dependências e ferramentas: pyproject.toml.
+
+Lista priorizada de refatoração (impacto × risco × ordem)
+1) Quebrar run_pipeline em etapas explícitas com contrato de resultado
+Impacto: Muito alto
+Risco: Médio
+Ordem: 1º
+
+Por que é dívida técnica real:
+Hoje _run_pipeline_impl concentra coleta, dedup, extração, sumarização, entrega, telemetria e tratamento de erro em um fluxo monolítico longo com muitos try/except e return antecipados, dificultando testes unitários por etapa e evolução segura.
+
+Sinal concreto no código:
+
+Múltiplos blocos de erro por etapa com lógica repetida de “log + evento + update run + return”.
+
+Estado do pipeline espalhado por efeitos colaterais de banco/eventos ao longo da função.
+
+Refatoração sugerida (prática):
+
+Extrair funções por etapa (collect, dedup, extract, summarize, deliver) retornando objeto de resultado tipado.
+
+Centralizar política de falha/sucesso em um único “executor de etapa”.
+
+Manter run_pipeline como orquestrador enxuto.
+
+2) Padronizar normalização/validação de JID e telefone em módulo único
+Impacto: Alto
+Risco: Baixo
+Ordem: 2º
+
+Por que é dívida técnica real:
+A mesma semântica aparece replicada com pequenas variações: _allowed_remote_jid em app.py, _normalize_remote_jid em webhook, _format_phone no sender. Isso aumenta risco de inconsistência funcional (grupo vs usuário, @lid, @g.us, @s.whatsapp.net).
+
+Refatoração sugerida:
+
+Criar utilitário único (phone_utils.py) com:
+
+normalize_jid_for_storage
+
+is_group_jid
+
+to_send_jid
+
+match_allowed_number
+
+Cobrir com testes dedicados de edge cases (jid com prefixos, grupos, números com/sem domínio).
+
+3) Revisar estratégia de erro genérico (except Exception) para erros de domínio
+Impacto: Alto
+Risco: Médio
+Ordem: 3º
+
+Por que é dívida técnica real:
+Há vários except Exception em caminhos críticos (pipeline, webhook, status), o que pode mascarar classes de falha recuperáveis vs fatais e dificultar observabilidade acionável.
+
+Refatoração sugerida:
+
+Definir exceções de domínio (FeedCollectionError, SummarizationError, DeliveryError, etc.).
+
+Tratar especificamente no boundary (API/scheduler) e registrar contexto estruturado.
+
+4) Eliminar wrappers síncronos do LLM client ou isolá-los fora do runtime async
+Impacto: Médio-alto
+Risco: Médio
+Ordem: 4º
+
+Por que é dívida técnica real:
+chat() e chat_json() misturam criação de loop/event loop manual, com aviso explícito de conflito em ambiente assíncrono. Isso é fonte clássica de bugs intermitentes e complexidade acidental em produção async.
+
+Refatoração sugerida:
+
+Tornar a API do cliente oficialmente async-only no backend.
+
+Se for necessário sync para CLI/testes, fornecer adapter separado (não no path principal da aplicação web).
+
+5) Extrair constantes de domínio duplicadas (períodos do pipeline)
+Impacto: Médio
+Risco: Baixo
+Ordem: 5º
+
+Por que é dívida técnica real:
+Os períodos válidos aparecem em múltiplos lugares (_build_digest_preview, trigger_pipeline, settings/scheduler). Duplicação aumenta chance de divergência futura.
+
+Refatoração sugerida:
+
+Criar PIPELINE_PERIODS + mapeamento período→função em módulo único.
+
+Reusar em validação de rota, agendamento e mensagens de erro.
+
+6) Criar camada de “policy” para retries/timeouts/backoff (LLM + WhatsApp + feeds)
+Impacto: Médio
+Risco: Médio
+Ordem: 6º
+
+Por que é dívida técnica real:
+Há política de retries/backoff espalhada no pipeline, no sender WhatsApp e no LLM client, com números hardcoded em cada lugar. Isso dificulta tuning operacional e observabilidade uniforme.
+
+Refatoração sugerida:
+
+Centralizar configuração em settings (com defaults).
+
+Expor métricas por tentativa/falha por integração.
+
+7) Adicionar tipagem explícita de payloads API e objetos de retorno internos
+Impacto: Médio
+Risco: Baixo
+Ordem: 7º
+
+Por que é dívida técnica real:
+Alguns endpoints e helpers retornam dict sem schema formal, e há trechos com dict[str, Any] amplo; isso reduz segurança de mudança e qualidade de contrato entre front/back interno.
+
+Refatoração sugerida:
+
+Pydantic models para respostas de preview/status/run.
+
+Dataclasses/TypedDict para resultados das etapas do pipeline.
+
+Dívida técnica real vs preferência estética
+Dívida técnica real (recomendo executar)
+Pipeline monolítico com responsabilidade excessiva.
+
+Duplicação de regra de normalização de JID/telefone.
+
+Tratamento genérico de exceções em caminhos críticos.
+
+Ambiguidade sync/async no LLM client.
+
+Políticas de retry/timeout espalhadas e hardcoded.
+
+Contratos de dados fracos em partes da API interna.
+
+Mais estético / baixo retorno imediato
+Padronização de idioma de comentários/logs (PT/EN mistos).
+
+Ajustes de estilo de logging (f-strings vs structured fields) sem mudança de arquitetura.
+
+Pequenas reorganizações de imports locais em funções (válido, mas ganho menor isoladamente).
+
+Ordem de execução recomendada (roadmap enxuto)
+Pipeline step-based + resultado tipado (fundação).
+
+Phone/JID utils central + testes unitários.
+
+Erro de domínio + tratamento específico.
+
+LLM async-only no runtime.
+
+Constantes de domínio únicas (períodos + mensagens).
+
+Config central de retry/timeout.
+
+Schemas de resposta e contratos tipados adicionais.
+
+Comandos usados na análise
+✅ pwd && rg --files -g 'AGENTS.md'
+
+✅ rg --files | head -n 200
+
+✅ sed -n '1,220p' app.py
+
+✅ sed -n '1,260p' config/settings.py
+
+✅ sed -n '1,260p' db/models.py
+
+✅ sed -n '1,260p' scheduler/jobs.py
+
+✅ sed -n '1,260p' interactions/webhook_handler.py
+
+✅ sed -n '1,260p' processor/llm_client.py
+
+✅ rg -n "normalize|@s.whatsapp.net|pipeline_map|except Exception|asyncio.get_event_loop|select\\(Subscriber\\)" app.py interactions scheduler processor delivery | head -n 200
+
+✅ nl -ba app.py | sed -n '120,260p'
+
+✅ nl -ba scheduler/jobs.py | sed -n '1,340p'
+
+✅ nl -ba interactions/webhook_handler.py | sed -n '1,140p'
+
+✅ nl -ba processor/llm_client.py | sed -n '1,320p'
+
+✅ nl -ba pyproject.toml | sed -n '1,240p'
+
+✅ nl -ba config/settings.py | sed -n '1,220p' && nl -ba delivery/whatsapp_sender.py | sed -n '1,120p'
+
+Se quiser, no próximo passo eu transformo isso em um plano de execução sprintável (ex.: 3 PRs com escopo, critérios de aceite e testes por PR), ainda sem codar.
