@@ -83,6 +83,7 @@
     llmConfig: null,
     headlineIndex: 0,
     selectedArticleIndex: 0,
+    selectedSummaryIndex: 0,
     filters: {
       nav: "",
       events: "",
@@ -166,6 +167,11 @@
 
   function statusPill(label, tone) {
     return `<span class="status ${tone || statusTone(label)}">${escapeHtml(label)}</span>`;
+  }
+
+  function statusDot(label, tone) {
+    const safeLabel = escapeHtml(label);
+    return `<span class="status-dot ${tone || statusTone(label)}" title="${safeLabel}" aria-label="${safeLabel}"></span>`;
   }
 
   function miniProgress(value, tone = "ok") {
@@ -302,25 +308,14 @@
     return rows;
   }
 
-  async function fetchJson(url, options = {}) {
-    const response = await fetch(url, {
-      ...options,
-      headers: { Accept: "application/json", ...(options.headers || {}) },
-    });
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-    return response.json();
-  }
-
   async function loadData({ quiet = false } = {}) {
     try {
       const [dashboard, subscribers, feeds, analytics, llmConfig] = await Promise.allSettled([
-        fetchJson("/api/dashboard"),
-        fetchJson("/api/subscribers"),
-        fetchJson("/api/feeds"),
-        fetchJson("/api/analytics"),
-        fetchJson("/api/llm-config"),
+        window.DataProvider.getDashboard(),
+        window.DataProvider.getSubscribers(),
+        window.DataProvider.getFeeds(),
+        window.DataProvider.getAnalytics(),
+        window.DataProvider.getLlmConfig(),
       ]);
 
       if (dashboard.status === "fulfilled") state.payload = dashboard.value;
@@ -330,7 +325,7 @@
       if (llmConfig.status === "fulfilled") state.llmConfig = llmConfig.value;
 
       renderAll();
-      if (!quiet) showToast("Dashboard atualizada com dados reais.", "ok");
+      if (!quiet) showToast("Dashboard atualizada.", "ok");
     } catch (error) {
       showToast(`Falha ao atualizar dashboard: ${error.message}`, "danger");
     }
@@ -554,7 +549,8 @@
           const details = item.details || {};
           const progress = item.status === "completed" ? 100 : item.status === "running" ? 65 : item.status === "failed" ? 35 : 8;
           const tone = statusTone(item.status);
-          return `<article class="stage-card ${item.status === "running" ? "is-running" : ""}"><span class="mono-label">${String(index + 1).padStart(2, "0")} · ${escapeHtml(item.periodLabel || item.period)}</span><strong class="stage-title">${escapeHtml(statusLabel(item.status))}</strong><p class="stage-meta">${escapeHtml(item.timeLabel || "--")} · ${number(details.articlesCollected || 0)} artigos · ${number(details.summariesGenerated || 0)} resumos</p>${miniProgress(progress, tone)}</article>`;
+          const stateClass = item.status === "running" ? "is-active" : item.status === "completed" ? "is-complete" : item.status === "failed" ? "is-failed" : "is-future";
+          return `<article class="stage-card ${stateClass}"><span class="stage-node" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span><span class="mono-label">${escapeHtml(item.periodLabel || item.period)}</span><strong class="stage-title">${escapeHtml(statusLabel(item.status))}</strong><p class="stage-meta">${escapeHtml(item.timeLabel || "--")} · ${number(details.articlesCollected || 0)} art. · ${number(details.summariesGenerated || 0)} res.</p>${miniProgress(progress, tone)}</article>`;
         })
         .join(""),
     );
@@ -576,7 +572,7 @@
         ? runs
             .map((run) => {
               const main = wide ? `<td class="mono">#${run.id}</td><td>${escapeHtml(run.periodLabel || run.period)}</td>` : `<td><div class="cell-main"><span class="cell-title">${escapeHtml(run.periodLabel || run.period)} · ${escapeHtml(run.startedAtLabel || "--")}</span><span class="cell-sub">${escapeHtml(run.errorSnippet || "rodada registrada")}</span></div></td>`;
-              return `<tr>${main}<td>${statusPill(statusLabel(run.status), statusTone(run.status))}</td><td>${number(run.articlesCollected || 0)} artigos</td><td>${number(run.summariesGenerated || 0)} editorias</td><td>${number(run.messagesSent || 0)} enviados</td><td>${duration(run.durationSeconds)}</td></tr>`;
+              return `<tr>${main}<td class="status-cell">${statusDot(statusLabel(run.status), statusTone(run.status))}</td><td class="num-cell">${number(run.articlesCollected || 0)}</td><td class="num-cell">${number(run.summariesGenerated || 0)}</td><td class="num-cell">${number(run.messagesSent || 0)}</td><td class="num-cell">${duration(run.durationSeconds)}</td></tr>`;
             })
             .join("")
         : `<tr><td colspan="${wide ? 7 : 6}">Nenhuma rodada registrada ainda.</td></tr>`,
@@ -631,10 +627,10 @@
             .map((event) => {
               const tone = statusTone(event.status);
               const level = tone === "danger" ? "ERROR" : tone === "warn" ? "WARN" : "INFO";
-              return `<div class="log-line"><span class="log-time">${escapeHtml(event.createdAtLabel || shortDateTime(event.createdAt))}</span><span class="log-level ${level.toLowerCase()}">${level}</span><strong>${escapeHtml(event.step || event.runPeriod || "pipeline")}</strong><span class="log-context">${escapeHtml(event.message || statusLabel(event.status))}</span></div>`;
+              return `<div class="log-line" data-level="${level.toLowerCase()}"><span class="log-time">${escapeHtml(event.createdAtLabel || shortDateTime(event.createdAt))}</span><span class="log-level ${level.toLowerCase()}">${level}</span><strong class="log-scope">${escapeHtml(event.step || event.runPeriod || "pipeline")}</strong><span class="log-context">${escapeHtml(event.message || statusLabel(event.status))}</span></div>`;
             })
             .join("")
-        : `<div class="log-line"><span class="log-time">--</span><span class="log-level">INFO</span><strong>sem eventos</strong><span class="log-context">Nenhum evento encontrado para o filtro atual.</span></div>`,
+        : `<div class="log-line" data-level="info"><span class="log-time">--</span><span class="log-level info">INFO</span><strong class="log-scope">sem eventos</strong><span class="log-context">Nenhum evento encontrado para o filtro atual.</span></div>`,
     );
   }
 
@@ -655,8 +651,8 @@
     setHtml(
       "incidentList",
       items.length
-        ? items.map((item) => `<li class="incident-item"><div class="section-head"><strong class="incident-title">${escapeHtml(item.title)}</strong>${statusPill(`${item.count}x`, item.tone)}</div><p class="compact-copy">${escapeHtml(item.body)}</p></li>`).join("")
-        : `<li class="incident-item"><strong class="incident-title">Sem incidentes agrupados</strong><p class="compact-copy">Os eventos recentes não indicam falhas abertas.</p></li>`,
+        ? items.map((item) => `<li class="incident-item ${item.tone}"><div class="incident-head"><span class="incident-count">${number(item.count)}x</span><strong class="incident-title">${escapeHtml(item.title)}</strong><span class="incident-tone">${escapeHtml(item.tone.toUpperCase())}</span></div><p class="compact-copy">${escapeHtml(item.body)}</p></li>`).join("")
+        : `<li class="incident-item neutral"><div class="incident-head"><span class="incident-count">0x</span><strong class="incident-title">Sem incidentes agrupados</strong><span class="incident-tone">OK</span></div><p class="compact-copy">Os eventos recentes não indicam falhas abertas.</p></li>`,
     );
   }
 
@@ -692,8 +688,9 @@
         ? filtered
             .map((feed) => {
               const stateName = feed.state || (feed.active ? "healthy" : "paused");
+              const tone = statusTone(stateName);
               const urlLabel = feed.url ? hostname(feed.url) : feed.lastError || "sem URL";
-              return `<article class="source-card"><div class="source-card-header"><div><h4 class="source-card-title">${escapeHtml(feed.name)}</h4><p class="source-card-url">${escapeHtml(urlLabel)}</p></div>${statusPill(statusLabel(stateName), statusTone(stateName))}</div><div style="margin-bottom: -6px;">${miniProgress(feed.healthScore ?? (feed.active ? 100 : 0), statusTone(stateName))}</div><div class="source-card-footer"><span class="mono-label">${escapeHtml(categoryLabel(feed.category))} · ${escapeHtml(feed.minutesSinceFetch !== undefined ? relativeMinutes(feed.minutesSinceFetch) : "--")}</span><button class="small-button" type="button" data-toggle-feed="${feed.id}">${feed.active ? "Pausar" : "Ativar"}</button></div></article>`;
+              return `<article class="source-card ${tone}" title="${escapeHtml(statusLabel(stateName))}"><div class="source-card-main"><span class="source-card-category">${escapeHtml(categoryLabel(feed.category))}</span><h4 class="source-card-title">${escapeHtml(feed.name)}</h4><p class="source-card-url">${escapeHtml(urlLabel)}</p></div><div class="source-card-meta"><span>${escapeHtml(feed.minutesSinceFetch !== undefined ? relativeMinutes(feed.minutesSinceFetch) : "--")}</span><span>${number(feed.healthScore ?? (feed.active ? 100 : 0))}%</span></div><button class="small-button source-action" type="button" data-toggle-feed="${feed.id}">${feed.active ? "Pausar" : "Ativar"}</button></article>`;
             })
             .join("")
         : `<div class="empty" style="grid-column: 1 / -1;"><h3>Nenhuma fonte encontrada</h3><p>Tente ajustar os filtros de busca.</p></div>`,
@@ -740,8 +737,8 @@
     setHtml(
       "articleDetail",
       item
-        ? `<div class="doc-top"><span class="mono-label" style="display: block; margin-bottom: 12px; color: var(--accent);">${escapeHtml(item.categoryLabel)}</span><h4>${escapeHtml(item.title)}</h4></div><p>${escapeHtml(item.card?.insight || item.card?.summaryText || "Nenhum resumo em prosa foi gerado para esta manchete na etapa de síntese. Apenas a chamada de comando está disponível.")}</p><div class="incident-list"><div class="incident-item"><strong class="incident-title">Fonte original (Grounding)</strong><p class="compact-copy">${escapeHtml(item.url || "sem URL vinculada")}</p></div><div class="incident-item"><strong class="incident-title">Comando de envio</strong><p class="mono">${escapeHtml(item.command || "sem command_hint")}</p></div><div class="incident-item"><strong class="incident-title">Metadados</strong><p class="compact-copy">${escapeHtml((item.sourceIds || []).join(", ") || "--")}</p></div></div>`
-        : `<h4>Nenhum artigo selecionado</h4><p>Clique em um item na lista ao lado para ler o resumo gerado e auditar as fontes originais e metadados de execução.</p>`,
+        ? `<div class="doc-top"><span class="doc-kicker">${escapeHtml(item.categoryLabel)}</span><h4>${escapeHtml(item.title)}</h4></div><p class="doc-copy">${escapeHtml(item.card?.insight || item.card?.summaryText || "Nenhum resumo em prosa foi gerado para esta manchete na etapa de síntese. Apenas a chamada de comando está disponível.")}</p><footer class="doc-meta"><div class="doc-meta-row"><span>Grounding</span><strong>${escapeHtml(item.url || "sem URL vinculada")}</strong></div><div class="doc-meta-row"><span>Comando</span><strong class="mono">${escapeHtml(item.command || "sem command_hint")}</strong></div><div class="doc-meta-row"><span>Source IDs</span><strong>${escapeHtml((item.sourceIds || []).join(", ") || "--")}</strong></div></footer>`
+        : `<div class="doc-top"><span class="doc-kicker">Leitura</span><h4>Nenhum artigo selecionado</h4></div><p class="doc-copy">Clique em um item na lista ao lado para ler o resumo gerado e auditar as fontes originais e metadados de execução.</p>`,
     );
   }
 
@@ -750,21 +747,22 @@
       const query = state.filters.summaries.toLowerCase();
       return !query || `${item.title} ${item.categoryLabel} ${item.command}`.toLowerCase().includes(query);
     });
+    if (state.selectedSummaryIndex >= rows.length) state.selectedSummaryIndex = 0;
+    const selected = rows[state.selectedSummaryIndex];
     renderSummaryCoverage();
     setHtml(
       "summaryItems",
       rows.length
         ? rows
-            .map((item, index) => `<div class="feed-item" data-select-summary="${index}"><div class="feed-item-header"><h4 class="feed-item-title">${escapeHtml(item.title)}</h4>${statusPill(confidenceLabel(item.status), statusTone(item.status))}</div><div class="feed-item-meta"><span>${escapeHtml(item.categoryLabel)}</span><span>·</span><span style="text-transform: none;">${escapeHtml(item.command || "sem comando")}</span></div></div>`)
+            .map((item, index) => `<div class="feed-item ${index === state.selectedSummaryIndex ? 'is-selected' : ''}" data-select-summary="${index}"><div class="feed-item-header"><h4 class="feed-item-title">${escapeHtml(item.title)}</h4>${statusPill(confidenceLabel(item.status), statusTone(item.status))}</div><div class="feed-item-meta"><span>${escapeHtml(item.categoryLabel)}</span><span>·</span><span>${escapeHtml(item.command || "sem comando")}</span></div></div>`)
             .join("")
         : `<div class="empty" style="margin: 16px;"><h3>Nenhum resumo encontrado</h3><p>Não há itens no digest para a janela selecionada.</p></div>`,
     );
-    const firstCard = cards()[0];
     setHtml(
       "summaryPreview",
-      firstCard
-        ? `<div class="doc-top"><span class="mono-label" style="display: block; margin-bottom: 12px; color: var(--accent);">${escapeHtml(firstCard.categoryLabel || "Resumo")}</span><h4>${escapeHtml(firstCard.header || "Sem título do agrupamento")}</h4></div><p>${escapeHtml(firstCard.summaryText || firstCard.insight || "Sem prosa renderizada para o resumo.")}</p><div class="incident-list"><div class="incident-item"><strong class="incident-title">Referências mapeadas</strong><p class="compact-copy">${escapeHtml((firstCard.sourceUrls || []).slice(0, 4).join(" · ") || "sem fonte vinculada")}</p></div><div class="incident-item"><strong class="incident-title">Modelo de IA</strong><p class="compact-copy">${escapeHtml(firstCard.modelUsed || state.llmConfig?.model || "Modelo padrão da plataforma")}</p></div></div>`
-        : `<h4>Digest vazio</h4><p>Aguardando a execução do modelo para gerar uma síntese das notícias mapeadas.</p>`,
+      selected
+        ? `<div class="doc-top"><span class="doc-kicker">${escapeHtml(selected.categoryLabel || "Resumo")}</span><h4>${escapeHtml(selected.title || selected.header || "Sem título do agrupamento")}</h4></div><p class="doc-copy">${escapeHtml(selected.card?.summaryText || selected.card?.insight || "Sem prosa renderizada para o resumo.")}</p><footer class="doc-meta"><div class="doc-meta-row"><span>Referências</span><strong>${escapeHtml((selected.card?.sourceUrls || []).slice(0, 4).join(" · ") || "sem fonte vinculada")}</strong></div><div class="doc-meta-row"><span>Comando</span><strong class="mono">${escapeHtml(selected.command || "sem command_hint")}</strong></div><div class="doc-meta-row"><span>Modelo</span><strong>${escapeHtml(selected.card?.modelUsed || state.llmConfig?.model || "Modelo padrão da plataforma")}</strong></div></footer>`
+        : `<div class="doc-top"><span class="doc-kicker">Digest</span><h4>Digest vazio</h4></div><p class="doc-copy">Aguardando a execução do modelo para gerar uma síntese das notícias mapeadas.</p>`,
     );
   }
 
@@ -775,9 +773,9 @@
       "summaryCoverage",
       entries.length
         ? entries
-            .map(([category, count]) => `<article class="mini"><span class="mono-label">${escapeHtml(categoryLabel(category))}</span><div class="mini-value">${number(count)}</div><p class="compact-copy">${number(count)} resumo(s) na janela de leitura.</p>${miniProgress(Math.min(100, count * 18), count >= 4 ? "ok" : "warn")}</article>`)
+            .map(([category, count]) => `<span class="tool-chip">${escapeHtml(categoryLabel(category))} <strong style="margin-left:4px">${number(count)}</strong></span>`)
             .join("")
-        : `<article class="mini"><span class="mono-label">sem resumos</span><div class="mini-value">0</div><p class="compact-copy">Rode uma janela para popular esta aba.</p></article>`,
+        : `<span class="tool-chip">Sem resumos</span>`,
     );
   }
 
@@ -955,9 +953,7 @@
     const period = operation().nextWindow?.period || latestRun()?.period || "morning";
     setButtonLoading(button, true);
     try {
-      const response = await fetch(`/run-pipeline/${encodeURIComponent(period)}`, { method: "POST", headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const payload = await response.json();
+      const payload = await window.DataProvider.runPipeline(period);
       showToast(`Pipeline ${period} iniciado: ${payload.run_id || payload.status || "ok"}.`, "ok");
       await loadData({ quiet: true });
     } catch (error) {
@@ -971,9 +967,7 @@
     const button = byId("btn-last24h");
     setButtonLoading(button, true);
     try {
-      const response = await fetch("/api/run-pipeline/last-24h", { method: "POST", headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      const payload = await response.json();
+      const payload = await window.DataProvider.runPipelineLast24h();
       showToast(`Prévia fiel da mensagem gerada: ${payload.summaryCount || 0} resumo(s).`, "ok");
       await loadData({ quiet: true });
     } catch (error) {
@@ -985,7 +979,7 @@
 
   async function toggleFeed(id) {
     try {
-      await fetchJson(`/api/feeds/${encodeURIComponent(id)}/toggle`, { method: "POST" });
+      await window.DataProvider.toggleFeed(id);
     } catch (error) {
       showToast(`Falha ao alternar fonte: ${error.message}`, "danger");
       return;
@@ -995,13 +989,13 @@
   }
 
   async function toggleSubscriber(id) {
-    const response = await fetch(`/api/subscribers/${encodeURIComponent(id)}/toggle`, { method: "POST", headers: { Accept: "application/json" } });
-    if (!response.ok) {
-      showToast(`Falha ao alternar assinante: ${response.statusText}`, "danger");
-      return;
+    try {
+      await window.DataProvider.toggleSubscriber(id);
+      showToast("Assinante atualizado.", "ok");
+      await loadData({ quiet: true });
+    } catch (error) {
+      showToast(`Falha ao alternar assinante: ${error.message}`, "danger");
     }
-    showToast("Assinante atualizado.", "ok");
-    await loadData({ quiet: true });
   }
 
   function exportCsv() {
@@ -1038,6 +1032,11 @@
         state.selectedArticleIndex = Number(article.dataset.selectArticle) || 0;
         renderArticles();
       }
+      const summary = event.target.closest("[data-select-summary]");
+      if (summary) {
+        state.selectedSummaryIndex = Number(summary.dataset.selectSummary) || 0;
+        renderSummaries();
+      }
     });
     byId("headlinePrev")?.addEventListener("click", () => {
       const length = summaryItems().length || 1;
@@ -1063,7 +1062,12 @@
       renderEvents();
     });
     byId("btnCopySummary")?.addEventListener("click", async () => {
-      const text = cards()[0]?.summaryText || "";
+      const rows = summaryItems().filter((item) => {
+        const query = state.filters.summaries.toLowerCase();
+        return !query || `${item.title} ${item.categoryLabel} ${item.command}`.toLowerCase().includes(query);
+      });
+      const selected = rows[state.selectedSummaryIndex];
+      const text = selected?.card?.summaryText || selected?.card?.insight || "";
       if (!text) {
         showToast("Não há resumo para copiar.", "warn");
         return;
