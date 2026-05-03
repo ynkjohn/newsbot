@@ -1,457 +1,301 @@
 <!doctype html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NewsBot — Intelligence</title>
-    <link rel="stylesheet" href="/static/dashboard.css?v=20260425-4" />
-  </head>
-  <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <div class="brand-section">
-          <div class="brand-text">
-            <h1>NewsBot</h1>
-            <span class="brand-sub">Intelligence Dashboard · Edição diária</span>
-          </div>
-        </div>
-
-        <div class="date-display" id="dateDisplay">SEGUNDA-FEIRA, 21 DE ABRIL DE 2026</div>
-
-        <div class="status-section">
-          <div class="status-stack">
-            <div id="bridgePill" class="status-badge neutral">Bridge</div>
-            <div id="healthPill" class="status-badge neutral">Health</div>
-          </div>
-          <div id="clock" class="time-display">00:00:00</div>
-        </div>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NewsBot — Intelligence</title>
+  <link rel="stylesheet" href="/static/dashboard.css?v=20260501-v7">
+</head>
+<body data-density="compact" data-tab-style="rail">
+  <div class="shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <header class="brand">
+        <div><h1>NewsBot</h1><div class="mono-label">Editorial ops</div></div>
+        <span class="live-status" id="sidebarStatus">online</span>
       </header>
 
-      <nav class="nav-row" aria-label="Seções da dashboard">
-        <div class="nav-tabs">
-          <button class="nav-btn is-active" id="nav-ops" data-view="ops" type="button">Operação</button>
-          <button class="nav-btn" id="nav-reading" data-view="reading" type="button">Leitura</button>
-          <button class="nav-btn" id="nav-subscribers" data-view="subscribers" type="button">Assinantes</button>
-          <button class="nav-btn" id="nav-feeds" data-view="feeds" type="button">Fontes</button>
-          <button class="nav-btn" id="nav-analytics" data-view="analytics" type="button">Analytics</button>
-          <button class="nav-btn" id="nav-llm-config" data-view="llm-config" type="button">LLM</button>
+      <section class="workspace" aria-label="Workspace ativo">
+        <div class="workspace-row">
+          <div><div class="mono-label">Workspace</div><div class="workspace-title">Operação pessoal / Brasil</div></div>
+          <button class="workspace-switch" type="button" aria-label="Trocar workspace">v</button>
         </div>
-        <div class="nav-actions">
-          <button class="btn-theme" id="btnThemeToggle" type="button" aria-pressed="false">
-            <span class="btn-theme-icon" id="themeIcon" aria-hidden="true">☾</span>
-            <span id="themeLabel">Modo noturno</span>
-          </button>
-          <button class="btn-reload" id="btnRefresh" type="button">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 2v6h-6"></path>
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-              <path d="M3 2v6h6"></path>
-              <path d="M21 12a9 9 0 1 0-9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
-            </svg>
-            <span id="refreshLabel">Recarregar</span>
-          </button>
-        </div>
-      </nav>
-
-      <section class="alert-banner is-warn" id="globalAlertBanner" aria-live="polite">
-        <div class="alert-copy">
-          <span class="alert-label">Panorama</span>
-          <span id="opsNarrative">Carregando panorama operacional...</span>
-        </div>
-        <div class="timeline-mini" id="miniTimeline"></div>
+        <input class="search-row as-input" id="navSearch" type="search" placeholder="Filtrar seção ou ação" aria-label="Busca de seções">
       </section>
 
-      <div class="view-container">
-        <main id="view-ops" class="view-content active" aria-labelledby="nav-ops">
-          <section class="ops-hero">
-            <div class="ops-hero-head">
-              <div class="ops-hero-copy-block">
-                <div class="ops-hero-kicker-row">
-                  <p class="eyebrow">Deck operacional</p>
-                  <span class="hero-inline-note">Métricas clicáveis, menos troca de contexto</span>
-                </div>
-                <h2>Painel do turno</h2>
-                <p class="ops-hero-copy" id="opsNarrativeLong">Use as métricas para navegar rápido pela operação.</p>
-              </div>
-
-              <div class="ops-hero-tags">
-                <span id="opsStatusTag" class="tag-premium">Status</span>
-                <span id="scheduleTag" class="tag-premium">Agenda</span>
-                <span id="lastUpdatedAt" class="tag-premium">Atualizado --</span>
-              </div>
-            </div>
-
-            <div class="ops-grid-top" id="metricsRow" aria-live="polite"></div>
-          </section>
-
-          <div class="ops-grid-bottom">
-            <section class="ops-section ops-section-pulse">
-              <div class="ops-section-head">
-                <div>
-                  <p class="eyebrow">Pulso</p>
-                  <h3>Pontos de ação</h3>
-                </div>
-                <span class="section-note">Atalhos e indicadores operacionais</span>
-              </div>
-
-              <div class="pulso-grid">
-                <button class="pulso-card pulso-card-action" data-quick-action="reading:pending" type="button">
-                  <span>Pendências</span>
-                  <h3 id="pendingSummaries">--</h3>
-                  <p>Abre a leitura com foco no que ainda não foi enviado.</p>
-                </button>
-
-                <button class="pulso-card pulso-card-action" data-quick-action="focus:recentRuns" type="button">
-                  <span>Falhas de entrega</span>
-                  <h3 id="failedDeliveries" class="is-danger">--</h3>
-                  <p>Leva para o histórico recente de execuções.</p>
-                </button>
-
-                <button class="pulso-card pulso-card-action" data-quick-action="focus:metricsRow" type="button">
-                  <span>Bridge</span>
-                  <h3 id="bridgeStatusText">--</h3>
-                  <p>Mostra o estado atual da integração com WhatsApp.</p>
-                </button>
-
-                <button class="pulso-card pulso-card-action" data-quick-action="focus:miniTimeline" type="button">
-                  <span>Próxima janela</span>
-                  <h3 id="nextSendLabel">--</h3>
-                  <p>Aponta a próxima execução programada do pipeline.</p>
-                </button>
-              </div>
-            </section>
-
-            <section class="ops-section ops-section-manual">
-              <div class="ops-section-head">
-                <div>
-                  <p class="eyebrow">Controle manual</p>
-                  <h3>Ações de pipeline</h3>
-                </div>
-              </div>
-
-              <p class="manual-desc">Reenvio e disparo imediato, sem sair da dashboard.</p>
-
-              <div class="action-stack">
-                <button class="btn-action-row" id="btn-retry" type="button">
-                  <div class="btn-icon">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="23 4 23 10 17 10"></polyline>
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                    </svg>
-                  </div>
-                  <div class="btn-text">
-                    <h4>Reenviar pendências de hoje</h4>
-                    <p>Refaz a entrega dos resumos ainda não enviados.</p>
-                  </div>
-                  <div class="btn-arrow">→</div>
-                </button>
-                <button class="btn-action-row" id="btn-last24h" type="button">
-                  <div class="btn-icon">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <polyline points="12 6 12 12 16 14"></polyline>
-                    </svg>
-                  </div>
-                  <div class="btn-text">
-                    <h4>Prévia 24h</h4>
-                    <p>Gera uma prévia fiel da mensagem que será enviada.</p>
-                  </div>
-                  <div class="btn-arrow">→</div>
-                </button>
-              </div>
-
-              <div class="manual-window-card">
-                <div class="manual-window-copy">
-                  <span class="manual-window-label">Executar janela especifica</span>
-                </div>
-                <div class="manual-window-buttons" aria-label="Forcar janela">
-                  <button class="btn-secondary btn-sm" data-pipeline-period="morning" type="button">Manha</button>
-                  <button class="btn-secondary btn-sm" data-pipeline-period="midday" type="button">Meio-dia</button>
-                  <button class="btn-secondary btn-sm" data-pipeline-period="afternoon" type="button">Tarde</button>
-                  <button class="btn-secondary btn-sm" data-pipeline-period="evening" type="button">Noite</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="ops-section ops-section-runs" id="recentRunsPanel">
-              <div class="ops-section-head">
-                <div>
-                  <p class="eyebrow">Historico</p>
-                  <h3>Ultimos pipelines</h3>
-                </div>
-                <span class="section-note">Execucoes recentes</span>
-              </div>
-
-              <div id="recentRuns" class="stack-list" aria-live="polite"></div>
-            </section>
-
-            <section class="ops-section ops-section-feeds" id="feedAlertsPanel">
-              <div class="ops-section-head">
-                <div>
-                  <p class="eyebrow">Monitoramento</p>
-                  <h3>Feeds em atenção</h3>
-                </div>
-                <span class="section-note">Fontes com falha ou inatividade</span>
-              </div>
-
-              <div id="feedAlerts" class="stack-list feed-alert-list" aria-live="polite"></div>
-            </section>
-          </div>
-        </main>
-
-        <main id="view-reading" class="view-content" aria-labelledby="nav-reading">
-          <aside class="reading-sidebar">
-            <div class="sidebar-title">Calendário</div>
-            <div id="dateNav" class="category-list" aria-label="Datas de leitura"></div>
-          </aside>
-
-          <section class="reading-main">
-            <div class="reading-toolbar">
-              <div class="reading-toolbar-main">
-                <div class="reading-toolbar-title">
-                  <p class="eyebrow">Leitura</p>
-                  <h3 id="readingResultsTitle">Resumos do dia</h3>
-                  <p class="reading-toolbar-copy" id="readingSelectionHint">Agrupado por janela e categoria para escolher mais rapido.</p>
-                </div>
-
-                <label class="search-shell" for="searchInput">
-                  <span class="search-shell-label">Busca</span>
-                  <input type="search" id="searchInput" class="search-input" placeholder="Buscar nos resumos..." />
-                </label>
-
-                <div class="reading-toolbar-actions">
-                  <button class="btn-secondary" id="btn-clearFilters" type="button">Limpar filtros</button>
-                </div>
-              </div>
-
-              <div class="filters-grid">
-                <div class="filter-group">
-                  <span class="filter-group-label">Ordenação</span>
-                  <div class="filters-row" id="sortControl" role="group" aria-label="Ordenação"></div>
-                </div>
-
-                <div class="filter-group">
-                  <span class="filter-group-label">Período</span>
-                  <div class="filters-row" id="periodControl" role="group" aria-label="Filtrar por período"></div>
-                </div>
-
-                <div class="filter-group">
-                  <span class="filter-group-label">Status</span>
-                  <div class="filters-row" id="statusControl" role="group" aria-label="Filtrar por status"></div>
-                </div>
-
-                <div class="filter-group">
-                  <span class="filter-group-label">Fontes e insight</span>
-                  <div class="filters-row" id="sourceControl" role="group" aria-label="Filtrar por fontes e insight"></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="list-header-meta">
-              <span id="readingResultCount">0 resumos</span>
-              <span class="meta-divider">·</span>
-              <span id="readingContextTag">Todas as categorias</span>
-            </div>
-
-            <div id="summaries" class="summary-list" aria-live="polite"></div>
-          </section>
-        </main>
-
-        <main id="view-subscribers" class="view-content" aria-labelledby="nav-subscribers">
-          <section class="ops-hero">
-            <div class="ops-hero-head">
-              <div class="ops-hero-copy-block">
-                <div class="ops-hero-kicker-row">
-                  <p class="eyebrow">Base de Leitores</p>
-                </div>
-                <h2>Gestão de Assinantes</h2>
-                <p class="ops-hero-copy">Controle quem recebe os resumos, status de atividade e veja as preferências configuradas via bot.</p>
-              </div>
-              <div class="ops-hero-tags">
-                <span id="subscribersTotalTag" class="tag-premium">0 assinantes</span>
-              </div>
-            </div>
-            
-            <div class="ops-section" style="margin-top: 14px; padding: 0;">
-              <div class="summary-period-header-clean">
-                <h3>Todos os usuários</h3>
-              </div>
-              <div class="summary-list-clean" id="subscribersList" style="background: var(--bg-panel-strong); border-radius: 0 0 var(--radius-xl) var(--radius-xl); overflow: hidden;">
-                <!-- Content will be loaded dynamically -->
-              </div>
-            </div>
-          </section>
-        </main>
-
-        <main id="view-feeds" class="view-content" aria-labelledby="nav-feeds">
-          <section class="ops-hero">
-            <div class="ops-hero-head">
-              <div class="ops-hero-copy-block">
-                <div class="ops-hero-kicker-row">
-                  <p class="eyebrow">Fontes de Notícias</p>
-                </div>
-                <h2>Gestão de Feeds RSS</h2>
-                <p class="ops-hero-copy">Gerencie as fontes de notícias usadas pelo NewsBot. Ative ou pause feeds e monitore erros de extração.</p>
-              </div>
-              <div class="ops-hero-tags">
-                <span id="feedsTotalTag" class="tag-premium">0 fontes</span>
-              </div>
-            </div>
-            
-            <div class="ops-section" style="margin-top: 14px; padding: 0;">
-              <div class="summary-period-header-clean">
-                <h3>Todos os feeds</h3>
-              </div>
-              <div class="summary-list-clean" id="feedsList" style="background: var(--bg-panel-strong); border-radius: 0 0 var(--radius-xl) var(--radius-xl); overflow: hidden;">
-                <!-- Content will be loaded dynamically -->
-              </div>
-            </div>
-          </section>
-        </main>
-
-        <main id="view-analytics" class="view-content" aria-labelledby="nav-analytics">
-          <section class="ops-hero">
-            <div class="ops-hero-head">
-              <div class="ops-hero-copy-block">
-                <div class="ops-hero-kicker-row">
-                  <p class="eyebrow">Inteligência de Dados</p>
-                </div>
-                <h2>Métricas e Performance</h2>
-                <p class="ops-hero-copy">Visualize o volume de notícias, uso de tokens e saúde da entrega nos últimos 7 dias.</p>
-              </div>
-            </div>
-
-            <div class="ops-grid-bottom" style="margin-top: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
-              <section class="ops-section">
-                <div class="ops-section-head">
-                  <h3>Notícias por Categoria</h3>
-                </div>
-                <div style="padding: 20px; height: 300px;">
-                  <canvas id="chartCategories"></canvas>
-                </div>
-              </section>
-
-              <section class="ops-section">
-                <div class="ops-section-head">
-                  <h3>Uso de Tokens (LLM)</h3>
-                </div>
-                <div style="padding: 20px; height: 300px;">
-                  <canvas id="chartTokens"></canvas>
-                </div>
-              </section>
-            </div>
-          </section>
-        </main>
-
-        <main id="view-llm-config" class="view-content" aria-labelledby="nav-llm-config">
-          <section class="ops-hero llm-config-hero">
-            <div class="ops-hero-head">
-              <div class="ops-hero-copy-block">
-                <div class="ops-hero-kicker-row">
-                  <p class="eyebrow">Configuração de IA</p>
-                </div>
-                <h2>Provider e modelo LLM</h2>
-                <p class="ops-hero-copy">Troque entre OpenRouter, DeepSeek direto e OpenAI sem reiniciar o NewsBot. Chaves ficam salvas localmente e mascaradas na dashboard.</p>
-              </div>
-              <div class="ops-hero-tags">
-                <span id="llmProviderTag" class="tag-premium">Provider não carregado</span>
-              </div>
-            </div>
-
-            <section class="ops-section llm-config-panel">
-              <div class="ops-section-head">
-                <div>
-                  <h3>Conexão ativa</h3>
-                  <p class="section-note llm-section-note">Teste antes de salvar para evitar interromper o pipeline.</p>
-                </div>
-                <span id="llmConfigStatus" class="tag-premium">Aguardando configuração</span>
-              </div>
-
-              <div class="llm-config-grid">
-                <label class="llm-field">
-                  <span>Provider</span>
-                  <select id="llmProvider" class="llm-input">
-                    <option value="">Carregando...</option>
-                  </select>
-                </label>
-
-                <label class="llm-field">
-                  <span>Modelo sugerido</span>
-                  <select id="llmModelPreset" class="llm-input">
-                    <option value="">Carregando...</option>
-                  </select>
-                </label>
-
-                <label class="llm-field">
-                  <span>Modelo customizado</span>
-                  <input id="llmModelCustom" class="llm-input" type="text" autocomplete="off" placeholder="ex.: deepseek-chat" />
-                </label>
-
-                <label class="llm-field">
-                  <span>Base URL</span>
-                  <input id="llmBaseUrl" class="llm-input" type="url" autocomplete="off" placeholder="https://api.deepseek.com" />
-                </label>
-
-                <label class="llm-field llm-field-wide">
-                  <span>API key</span>
-                  <input id="llmApiKey" class="llm-input" type="password" autocomplete="new-password" placeholder="Cole uma nova chave ou mantenha a atual mascarada" />
-                  <small id="llmApiKeyHint">A chave atual nunca é exibida em texto claro.</small>
-                </label>
-              </div>
-
-              <div class="llm-config-actions">
-                <button id="btnTestLlmConfig" class="btn-secondary" type="button">Testar conexão</button>
-                <button id="btnSaveLlmConfig" class="btn-reload" type="button">Salvar configuração</button>
-              </div>
-            </section>
-          </section>
-        </main>
-      </div>
-    </div>
-
-    <button id="drawerBackdrop" class="drawer-overlay" type="button" aria-hidden="true" tabindex="-1"></button>
-
-    <aside id="summaryDrawer" class="drawer" aria-hidden="true" aria-labelledby="drawerTitle">
-      <header class="drawer-head">
-        <div class="drawer-head-copy">
-          <span id="drawerTag" class="tag-premium">Categoria</span>
-          <h2 id="drawerTitle">Selecione um resumo</h2>
-          <p id="drawerMeta" class="drawer-meta">—</p>
-        </div>
-        <button id="drawerClose" class="btn-close" type="button" aria-label="Fechar detalhes">×</button>
-      </header>
-
-      <div class="drawer-body">
-        <div id="drawerInsightSection" class="insight-box" hidden>
-          <p id="drawerInsight"></p>
-        </div>
-
-        <div class="summary-section">
-          <h4>Destaques</h4>
-          <ul id="drawerBullets"></ul>
-        </div>
-
-        <div class="summary-section">
-          <h4>Leitura completa</h4>
-          <div id="drawerSections"></div>
-        </div>
-
-        <div id="drawerSourcesSection" class="summary-section" hidden>
-          <h4>Fontes</h4>
-          <ul id="drawerSources" class="drawer-source-list"></ul>
-        </div>
+      <div class="nav-scroll">
+        <nav class="nav-group" aria-label="Operação">
+          <div class="nav-kicker">Operação</div>
+          <ul class="nav-tabs">
+            <li><button class="nav-tab is-active" type="button" data-tab="overview"><span class="tab-copy"><span class="tab-title">Visão geral</span><span class="tab-hint">Alertas, SLA, digest pronto</span></span><span class="badge danger" id="badgeOverview">0</span></button></li>
+            <li><button class="nav-tab" type="button" data-tab="pipeline"><span class="tab-copy"><span class="tab-title">Pipeline</span><span class="tab-hint">Onde a rodada trava</span></span><span class="badge warn" id="badgePipeline">0</span></button></li>
+            <li><button class="nav-tab" type="button" data-tab="events"><span class="tab-copy"><span class="tab-title">Logs e eventos</span><span class="tab-hint">Falhas, retries, auditoria</span></span><span class="badge danger" id="badgeEvents">0</span></button></li>
+          </ul>
+        </nav>
+        <nav class="nav-group" aria-label="Conteúdo">
+          <div class="nav-kicker">Conteúdo</div>
+          <ul class="nav-tabs">
+            <li><button class="nav-tab" type="button" data-tab="sources"><span class="tab-copy"><span class="tab-title">Fontes RSS</span><span class="tab-hint">RSS vs extração real</span></span><span class="badge warn" id="badgeSources">0</span></button></li>
+            <li><button class="nav-tab" type="button" data-tab="articles"><span class="tab-copy"><span class="tab-title">Artigos</span><span class="tab-hint">Auditar antes da síntese</span></span><span class="badge ok" id="badgeArticles">0</span></button></li>
+            <li><button class="nav-tab" type="button" data-tab="summaries"><span class="tab-copy"><span class="tab-title">Resumos</span><span class="tab-hint">Revisar digest final</span></span><span class="badge ok" id="badgeSummaries">0</span></button></li>
+          </ul>
+        </nav>
+        <nav class="nav-group" aria-label="Distribuição e administração">
+          <div class="nav-kicker">Distribuição</div>
+          <ul class="nav-tabs">
+            <li><button class="nav-tab" type="button" data-tab="whatsapp"><span class="tab-copy"><span class="tab-title">WhatsApp</span><span class="tab-hint">Fila, assinantes, bloqueios</span></span><span class="badge ok" id="badgeWhatsapp">0</span></button></li>
+            <li><button class="nav-tab" type="button" data-tab="costs"><span class="tab-copy"><span class="tab-title">Modelos e custo</span><span class="tab-hint">Tokens, fallback, limite</span></span><span class="badge warn">R$</span></button></li>
+            <li><button class="nav-tab" type="button" data-tab="settings"><span class="tab-copy"><span class="tab-title">Configurações</span><span class="tab-hint">Workspace SaaS-ready</span></span><span class="badge">soon</span></button></li>
+          </ul>
+        </nav>
       </div>
 
-      <footer id="drawerFooter" class="drawer-head" style="border-top: 1px solid var(--line); border-bottom: 0; padding: 16px 20px;" hidden>
-        <button id="btnApproveSummary" class="btn-reload" style="width: 100%; justify-content: center; background: var(--status-ok); color: white; border: 0;">
-          Aprovar e liberar para envio
-        </button>
+      <footer class="side-foot">
+        <div class="nav-kicker">Permissões futuras</div>
+        <div class="role-grid"><span class="role">Owner</span><span class="role">Editor</span><span class="role">Viewer</span></div>
+        <p class="panel-note">A lateral concentra navegação e prepara multi-workspace sem duplicar abas no conteúdo.</p>
       </footer>
     </aside>
 
-    <div id="toast" role="status" aria-live="polite"></div>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Agora - <span id="currentContext">visão geral operacional</span></div>
+          <h2 class="page-title" id="pageTitle">Controle editorial em tempo real</h2>
+          <p class="page-subtitle" id="pageSubtitle">A visão geral mostra saúde do sistema, cobertura editorial e as manchetes prontas para decidir em segundos se o digest pode ser enviado.</p>
+        </div>
+        <div class="top-actions">
+          <button class="button" type="button" id="btnExportCsv">Exportar CSV</button>
+          <button class="button" id="btn-last24h" type="button" title="prévia fiel da mensagem">Prévia 24h</button>
+          <button class="button" type="button" id="btnOpenQueue">Abrir fila</button>
+          <button class="button primary" type="button" id="btnRunNow">Rodar agora</button>
+        </div>
+      </header>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/dashboard-extra.js?v=20260430-llm-fix3"></script>
-  </body>
+      <section class="command-strip" aria-label="Faixa operacional" data-od-id="ops-strip">
+        <div class="ops-ticker">
+          <div class="ticker-item"><span class="mono-label">Janela ativa</span><strong class="ticker-value" id="tickerWindow">--</strong></div>
+          <div class="ticker-item"><span class="mono-label">Próximo envio</span><strong class="ticker-value" id="tickerNext">--</strong></div>
+          <div class="ticker-item"><span class="mono-label">SLA editorial</span><strong class="ticker-value" id="tickerSla">--</strong></div>
+          <div class="ticker-item"><span class="mono-label">Saúde hoje</span><strong class="ticker-value" id="tickerHealth">--</strong></div>
+        </div>
+        <button class="command-button" type="button" id="btnCommand">Command /</button>
+      </section>
+
+      <section class="view is-active" data-view="overview" data-od-id="overview-view">
+        <div class="stack">
+          <div class="alert-row" data-od-id="alert-row" id="overviewAlerts"></div>
+          <div class="metrics" data-od-id="metric-grid" id="overviewMetrics"></div>
+
+          <div class="dashboard-grid">
+            <section class="stack">
+              <article class="panel" data-od-id="pipeline-table">
+                <header class="panel-header">
+                  <div><div class="mono-label">Pipeline por janela</div><h3 class="panel-title">Últimas execuções</h3><p class="panel-note">O estado ativo fica claro antes da tabela completa.</p></div>
+                  <span class="tool-chip strong" id="activeRunChip">--</span>
+                </header>
+                <div class="table-wrap">
+                  <table aria-label="Tabela de execuções">
+                    <thead><tr><th>Rodada</th><th>Status</th><th>Coleta</th><th>Síntese</th><th>Entrega</th><th>Duração</th></tr></thead>
+                    <tbody id="overviewRuns"></tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article class="panel" data-od-id="quality-editorial-panel">
+                <header class="panel-header">
+                  <div>
+                    <div class="mono-label">Qualidade editorial e cobertura</div>
+                    <h3 class="panel-title">Cobertura + manchetes prontas</h3>
+                    <p class="panel-note">Um painel para validar se há base editorial suficiente e quais chamadas estão prontas para envio.</p>
+                  </div>
+                  <a class="tool-chip strong" href="#" data-switch-tab="summaries">Ver resumo completo</a>
+                </header>
+                <div class="panel-body">
+                  <div class="quality-layout">
+                    <div class="coverage-grid" aria-label="Cobertura por editoria" id="coverageGrid"></div>
+                    <aside class="headline-rail" aria-label="Carrossel de manchetes prontas">
+                      <div class="headline-rail-top"><span class="carousel-kicker">Manchetes prontas</span><span class="carousel-count" id="headlineCount">0/0</span></div>
+                      <div id="headlineCards"></div>
+                      <div class="carousel-controls"><span class="command-hint" id="headlineCommandLabel">WhatsApp command_hint</span><span><button class="carousel-button" type="button" id="headlinePrev" aria-label="Manchete anterior">&lt;</button><button class="carousel-button" type="button" id="headlineNext" aria-label="Próxima manchete">&gt;</button></span></div>
+                    </aside>
+                    <div class="quality-footer"><span class="count-line" id="catégoryCountLine">--</span><a class="tool-chip strong" href="#" data-switch-tab="summaries">Ver resumo completo</a></div>
+                  </div>
+                </div>
+              </article>
+            </section>
+
+            <aside class="stack">
+              <article class="panel" data-od-id="delivery-panel">
+                <header class="panel-header"><div><div class="mono-label">WhatsApp</div><h3 class="panel-title">Entregas</h3></div><span class="status ok" id="deliveryStatus">--</span></header>
+                <div class="panel-body">
+                  <ul class="timeline" id="deliveryTimeline"></ul>
+                </div>
+              </article>
+              <article class="panel" data-od-id="system-log">
+                <header class="panel-header"><div><div class="mono-label">Logs/eventos</div><h3 class="panel-title">Últimas linhas</h3></div><a class="tool-chip strong" href="#" data-switch-tab="events">Abrir</a></header>
+                <div class="panel-body">
+                  <div class="log-console" id="overviewLogs" style="min-height: 186px;"></div>
+                </div>
+              </article>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="pipeline" data-od-id="pipeline-detail">
+        <div class="filter-bar" id="pipelineFilters"></div>
+        <div class="stack">
+          <div class="stage-track" aria-label="Timeline de etapas do pipeline" id="stageTrack"></div>
+          <div class="wide-grid">
+            <article class="panel">
+              <header class="panel-header"><div><div class="mono-label">Últimas execuções</div><h3 class="panel-title">Histórico por rodada</h3></div><button class="small-button" id="btnRefreshPipeline">Atualizar runs</button></header>
+              <div class="table-wrap">
+                <table class="wide-table">
+                  <thead><tr><th>run_id</th><th>janela</th><th>status</th><th>artigos</th><th>resumos</th><th>entrega</th><th>duração</th></tr></thead>
+                  <tbody id="pipelineRuns"></tbody>
+                </table>
+              </div>
+            </article>
+            <aside class="panel">
+              <header class="panel-header"><div><div class="mono-label">Bloqueios atuais</div><h3 class="panel-title">Próximas ações</h3></div></header>
+              <div class="panel-body">
+                <ul class="blocker-list" id="pipelineBlockers"></ul>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="events" data-od-id="events-detail">
+        <div class="filter-bar">
+          <span class="input-chip">severidade: warn+error</span>
+          <span class="input-chip">etapa: todas</span>
+          <input class="filter-input" id="eventSearch" type="search" placeholder="Buscar evento">
+          <button class="small-button" id="btnClearEventSearch">Limpar</button>
+        </div>
+        <div class="dense-stats" id="eventStats"></div>
+        <div class="detail-grid" style="margin-top: var(--gap);">
+          <article class="panel">
+            <header class="panel-header"><div><div class="mono-label">Log viewer</div><h3 class="panel-title">Eventos filtrados</h3></div></header>
+            <div class="panel-body">
+              <div class="log-console" id="eventLogViewer"></div>
+            </div>
+          </article>
+          <aside class="panel">
+            <header class="panel-header"><div><div class="mono-label">Incidentes agrupados</div><h3 class="panel-title">Top problemas</h3></div></header>
+            <div class="panel-body">
+              <ul class="incident-list" id="incidentList"></ul>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" data-view="sources" data-od-id="sources-detail">
+        <div class="dense-stats" id="sourceStats"></div>
+        <div class="filter-bar" style="margin-top: var(--gap);">
+          <input class="filter-input" id="sourceSearch" type="search" placeholder="Buscar fonte ou editoria">
+          <span class="input-chip">estado: degradadas primeiro</span>
+          <button class="small-button" id="btnRefreshSources">Atualizar fontes</button>
+        </div>
+        <div class="source-grid" id="sourceRows" style="margin-top: var(--gap);"></div>
+      </section>
+
+      <section class="view" data-view="articles" data-od-id="articles-detail">
+        <div class="dense-stats" id="articleStats"></div>
+        <div class="filter-bar" style="margin-top: var(--gap);">
+          <input class="filter-input" id="articleSearch" type="search" placeholder="Buscar artigo ou comando">
+          <span class="input-chip">janela: últimos resumos</span>
+          <span class="input-chip">duplicado: incluir</span>
+        </div>
+        <div class="detail-grid">
+          <article class="panel">
+            <header class="panel-header"><div><div class="mono-label">Fila editorial</div><h3 class="panel-title">Artigos antes da síntese</h3></div></header>
+            <div class="feed-list" id="articleRows"></div>
+          </article>
+          <aside class="doc-preview" id="articleDetail"></aside>
+        </div>
+      </section>
+
+      <section class="view" data-view="summaries" data-od-id="summaries-detail">
+        <div class="filter-bar">
+          <input class="filter-input" id="summarySearch" type="search" placeholder="Buscar resumo">
+          <span class="input-chip">status: pronto para revisar</span>
+          <button class="small-button" id="btnCopySummary">Copiar preview</button>
+        </div>
+        <div class="detail-grid">
+          <section class="stack">
+            <div class="mini-grid" id="summaryCoverage"></div>
+            <article class="panel">
+              <header class="panel-header"><div><div class="mono-label">Manchetes e grounding</div><h3 class="panel-title">Itens do digest</h3></div></header>
+              <div class="feed-list" id="summaryItems"></div>
+            </article>
+          </section>
+          <aside class="doc-preview" id="summaryPreview"></aside>
+        </div>
+      </section>
+
+      <section class="view" data-view="whatsapp" data-od-id="whatsapp-detail">
+        <div class="dense-stats" id="whatsappStats"></div>
+        <div class="detail-grid" style="margin-top: var(--gap);">
+          <article class="panel">
+            <header class="panel-header"><div><div class="mono-label">Destinatários</div><h3 class="panel-title">Assinantes e preferências</h3></div><button class="small-button" id="btnRefreshSubscribers">Atualizar</button></header>
+            <div class="table-wrap">
+              <table class="wide-table">
+                <thead><tr><th>destinatário</th><th>tipo</th><th>status</th><th>último envio</th><th>preferência</th><th>ação</th></tr></thead>
+                <tbody id="subscriberRows"></tbody>
+              </table>
+            </div>
+          </article>
+          <aside class="stack">
+            <article class="panel">
+              <header class="panel-header"><div><div class="mono-label">Bloqueios</div><h3 class="panel-title">Entrega atual</h3></div></header>
+              <div class="panel-body"><ul class="blocker-list" id="whatsappBlockers"></ul></div>
+            </article>
+            <article class="panel">
+              <header class="panel-header"><div><div class="mono-label">Timeline</div><h3 class="panel-title">Entregas recentes</h3></div></header>
+              <div class="panel-body"><ul class="timeline" id="whatsappTimeline"></ul></div>
+            </article>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" data-view="costs" data-od-id="costs-detail">
+        <div class="dense-stats" id="costStats"></div>
+        <div class="detail-grid" style="margin-top: var(--gap);">
+          <section class="stack">
+            <article class="panel">
+              <header class="panel-header"><div><div class="mono-label">Tokens por rodada</div><h3 class="panel-title">Input, output e custo estimado</h3></div></header>
+              <div class="panel-body"><div class="bars" id="tokenBars"></div></div>
+            </article>
+            <article class="panel">
+              <header class="panel-header"><div><div class="mono-label">Chamadas LLM recentes</div><h3 class="panel-title">Catégoria, modelo e status</h3></div></header>
+              <div class="table-wrap"><table class="wide-table"><thead><tr><th>catégoria</th><th>modelo</th><th>tokens</th><th>custo</th><th>status</th><th>duração</th></tr></thead><tbody id="llmRows"></tbody></table></div>
+            </article>
+          </section>
+          <aside class="panel">
+            <header class="panel-header"><div><div class="mono-label">Comparação por modelo</div><h3 class="panel-title">Qualidade vs custo</h3></div></header>
+            <div class="panel-body"><div class="bars" id="modelBars"></div></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" data-view="settings" data-od-id="settings-detail">
+        <div class="settings-grid" id="settingsCards"></div>
+        <div class="detail-grid" style="margin-top: var(--gap);">
+          <article class="panel">
+            <header class="panel-header"><div><div class="mono-label">Papéis e permissões</div><h3 class="panel-title">Hierarquia de acesso</h3></div></header>
+            <div class="table-wrap"><table><thead><tr><th>papel</th><th>pode enviar</th><th>pode editar fontes</th><th>pode ver custo</th><th>pode convidar</th></tr></thead><tbody><tr><td>Owner</td><td>sim</td><td>sim</td><td>sim</td><td>sim</td></tr><tr><td>Editor</td><td>sim</td><td>não</td><td>parcial</td><td>não</td></tr><tr><td>Viewer</td><td>não</td><td>não</td><td>não</td><td>não</td></tr></tbody></table></div>
+          </article>
+          <aside class="panel">
+            <header class="panel-header"><div><div class="mono-label">Configuração ativa</div><h3 class="panel-title">Valores chave</h3></div></header>
+            <div class="panel-body"><div class="incident-list" id="activeSettings"></div></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/static/dashboard-extra.js?v=20260501-v7"></script>
+</body>
 </html>

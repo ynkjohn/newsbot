@@ -1,191 +1,187 @@
 (function () {
-  const STORAGE_KEY = "newsbot-dashboard-v10";
-  const THEME_STORAGE_KEY = "newsbot-dashboard-theme-v1";
+  "use strict";
+
   const AUTO_REFRESH_MS = 60_000;
-  const CLOCK_REFRESH_MS = 1_000;
-  const DEFAULT_TIMEZONE = "America/Sao_Paulo";
-
-  const SORT_OPTIONS = [
-    { value: "newest", label: "Mais novos" },
-    { value: "oldest", label: "Mais antigos" },
-  ];
-
-  const PERIOD_OPTIONS = [
-    { value: "morning", label: "Manhã" },
-    { value: "midday", label: "Meio-dia" },
-    { value: "afternoon", label: "Tarde" },
-    { value: "evening", label: "Noite" },
-  ];
-
-  const STATUS_OPTIONS = [
-    { value: "pending", label: "Pendentes" },
-    { value: "sent", label: "Enviados" },
-  ];
-
-  const SOURCE_OPTIONS = [
-    { value: 0, label: "Todas as fontes" },
-    { value: 1, label: "1+ fonte" },
-    { value: 3, label: "3+ fontes" },
-    { value: 5, label: "5+ fontes" },
-  ];
-
   const CATEGORY_ORDER = [
-    { value: "all", label: "Todas" },
-    { value: "politica-brasil", label: "Política Nacional" },
-    { value: "economia-brasil", label: "Economia Nacional" },
-    { value: "geopolitica", label: "Geopolítica" },
-    { value: "economia-mundo", label: "Economia Internacional" },
-    { value: "cripto-tech", label: "Cripto/Tech" },
+    "politica-brasil",
+    "economia-brasil",
+    "economia-cripto",
+    "economia-mundao",
+    "economia-mundo",
+    "economia-internacional",
+    "politica-mundao",
+    "politica-internacional",
+    "geopolitica",
+    "tech",
   ];
-
-  const STATUS_META = {
-    connected: { label: "Bridge online", tone: "ok" },
-    connected_false: { label: "Bridge instável", tone: "warn" },
-    unreachable: { label: "Bridge offline", tone: "danger" },
-    completed: { label: "Concluído", tone: "ok" },
-    running: { label: "Em execução", tone: "warn" },
-    upcoming: { label: "Próximo", tone: "warn" },
-    failed: { label: "Falhou", tone: "danger" },
-    pending: { label: "Pendente", tone: "warn" },
-    sent: { label: "Enviado", tone: "ok" },
+  const CATEGORY_LABELS = {
+    "politica-brasil": "Política Brasil",
+    "economia-brasil": "Economia Brasil",
+    "economia-cripto": "Cripto",
+    "economia-mundao": "Economia Mundo",
+    "economia-mundo": "Economia Mundo",
+    "economia-internacional": "Economia Mundo",
+    "politica-mundao": "Mundo",
+    "politica-internacional": "Mundo",
+    geopolitica: "Mundo",
+    tech: "Tech",
   };
-
-  const CATEGORY_DOT_CLASS = {
-    "cripto-tech": "dot-crypto",
-    tech: "dot-tech",
-    "economia-mundo": "dot-econ",
-    "economia-internacional": "dot-econ",
-    "economia-brasil": "dot-econ",
-    "politica-brasil": "dot-br",
-    "politica-internacional": "dot-world",
-    "economia-cripto": "dot-crypto",
-    geopolitica: "dot-world",
+  const TAB_META = {
+    overview: {
+      context: "visão geral operacional",
+      title: "Controle editorial em tempo real",
+      subtitle: "Saúde do sistema, cobertura editorial e manchetes prontas para decidir se o digest pode ser enviado.",
+    },
+    pipeline: {
+      context: "pipeline por janela",
+      title: "Pipeline da rodada atual",
+      subtitle: "Coleta, extração, síntese e entrega aparecem como estados operáveis, com bloqueios e próxima ação visível.",
+    },
+    events: {
+      context: "logs e eventos",
+      title: "Auditoria operacional",
+      subtitle: "Eventos recentes ficam em uma aba própria para investigar falhas sem poluir a visão geral.",
+    },
+    sources: {
+      context: "saúde de fontes RSS",
+      title: "Fontes com verificação real",
+      subtitle: "A aba separa disponibilidade de RSS e extração de artigo para evitar falso positivo operacional.",
+    },
+    articles: {
+      context: "fila editorial",
+      title: "Artigos coletados e reprocessados",
+      subtitle: "Busca, estados e ações rápidas ficam prontos para auditar conteúdo antes do resumo.",
+    },
+    summaries: {
+      context: "resumos por editoria",
+      title: "Revisão editorial por categoria",
+      subtitle: "Cada resumo mostra fontes usadas, grounding, tamanho, risco e ação de reprocessamento.",
+    },
+    whatsapp: {
+      context: "entregas WhatsApp",
+      title: "Fila de entrega e assinantes",
+      subtitle: "Bridge, destinatários, retries e bloqueios de envio ficam separados da criação do digest.",
+    },
+    costs: {
+      context: "custos e modelos",
+      title: "Tokens por rodada e modelo",
+      subtitle: "O custo aparece como instrumento de operação: limite, fallback, modelo e impacto editorial.",
+    },
+    settings: {
+      context: "configurações do workspace",
+      title: "Configurações escaláveis",
+      subtitle: "A estrutura já comporta fontes, horários, modelos, limites e permissões por workspace.",
+    },
   };
-
-  const CATEGORY_LABEL_OVERRIDES = {
-    "politica-brasil": "Política Nacional",
-    "economia-brasil": "Economia Nacional",
-    geopolitica: "Geopolítica",
-    "economia-mundo": "Economia Internacional",
-    "cripto-tech": "Cripto/Tech",
-    "politica-internacional": "Política Internacional",
-    "economia-internacional": "Economia Internacional",
-    "economia-cripto": "Criptoativos",
-    tech: "Tecnologia",
-  };
-
-  const VALID_VIEWS = ["ops", "reading", "subscribers", "feeds", "analytics", "llm-config"];
 
   const state = {
-    loading: true,
-    theme: "light",
-    view: "ops",
+    activeTab: "overview",
     payload: null,
+    feeds: [],
+    subscribers: [],
+    analytics: null,
     llmConfig: null,
-    llmBusy: false,
-    currentDate: "all",
+    headlineIndex: 0,
+    selectedArticleIndex: 0,
     filters: {
-      search: "",
-      sort: "newest",
-      periods: new Set(),
-      statuses: new Set(),
-      sourceMin: 0,
-      insightOnly: false,
+      nav: "",
+      events: "",
+      sources: "",
+      articles: "",
+      summaries: "",
     },
-    drawer: {
-      open: false,
-      cardId: null,
-    },
-    toastTimer: null,
-    clockTimer: null,
+    refreshTimer: null,
+    countdownTimer: null,
   };
 
-  function byId(id) {
-    return document.getElementById(id);
-  }
-
-  function preferredTheme() {
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
+  const byId = (id) => document.getElementById(id);
+  const all = (selector) => Array.from(document.querySelectorAll(selector));
 
   function escapeHtml(value) {
     return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
-  function normalizeText(value) {
-    return String(value || "")
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .trim();
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, Number(value) || 0));
   }
 
-  function pluralize(value, singular, plural) {
-    return `${value} ${value === 1 ? singular : plural}`;
+  function pct(value) {
+    return `${clamp(value, 0, 100).toFixed(0)}%`;
   }
 
-  function sentimentIcon(sentiment) {
-    if (sentiment === "positive") return "▲";
-    if (sentiment === "negative") return "▼";
-    if (sentiment === "mixed") return "◆";
-    return "•";
+  function compactNumber(value) {
+    const number = Number(value) || 0;
+    return new Intl.NumberFormat("pt-BR", { notation: number >= 10000 ? "compact" : "standard" }).format(number);
   }
 
-  function titleCaseWords(value) {
-    return String(value || "")
-      .split(" ")
-      .filter(Boolean)
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ");
+  function number(value) {
+    return new Intl.NumberFormat("pt-BR").format(Number(value) || 0);
   }
 
-  function displayCategoryLabel(category, fallbackLabel = "") {
-    if (CATEGORY_LABEL_OVERRIDES[category]) {
-      return CATEGORY_LABEL_OVERRIDES[category];
+  function categoryLabel(category) {
+    return CATEGORY_LABELS[category] || String(category || "sem categoria");
+  }
+
+  function statusTone(status) {
+    const normalized = String(status || "").toLowerCase();
+    if (["completed", "success", "sent", "healthy", "connected", "ok", "approved"].some((item) => normalized.includes(item))) {
+      return "ok";
     }
-
-    const fallback = String(fallbackLabel || "").trim();
-    if (fallback && normalizeText(fallback) !== normalizeText(category)) {
-      return fallback;
+    if (["failed", "error", "broken", "offline", "empty", "invalid", "vazio"].some((item) => normalized.includes(item))) {
+      return "danger";
     }
-
-    return titleCaseWords(String(category || "").replaceAll("-", " "));
-  }
-
-  function displayPeriodLabel(period, fallbackLabel = "") {
-    return PERIOD_OPTIONS.find((option) => option.value === period)?.label || fallbackLabel || "Janela";
-  }
-
-  function timezone() {
-    return state.payload?.timezone || DEFAULT_TIMEZONE;
-  }
-
-  function applyTheme(theme, { persist = true } = {}) {
-    state.theme = theme === "dark" ? "dark" : "light";
-    document.body.dataset.theme = state.theme;
-
-    if (persist) {
-      try {
-        localStorage.setItem(THEME_STORAGE_KEY, state.theme);
-      } catch (error) {
-        console.debug("Falha ao salvar tema", error);
-      }
+    if (["running", "pending", "degraded", "stale", "warn", "partial", "parcial", "draft"].some((item) => normalized.includes(item))) {
+      return "warn";
     }
+    if (["paused", "inactive", "noop"].some((item) => normalized.includes(item))) {
+      return "paused";
+    }
+    return "neutral";
   }
 
-  function loadThemePreference() {
-    try {
-      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-      applyTheme(savedTheme === "dark" || savedTheme === "light" ? savedTheme : preferredTheme(), { persist: false });
-    } catch (error) {
-      console.debug("Falha ao carregar tema", error);
-      applyTheme(preferredTheme(), { persist: false });
-    }
+  function statusLabel(status) {
+    const labels = {
+      completed: "concluída",
+      running: "rodando",
+      failed: "falhou",
+      pending: "pendente",
+      upcoming: "próxima",
+      healthy: "saudável",
+      degraded: "degradada",
+      stale: "antiga",
+      broken: "quebrada",
+      paused: "pausada",
+      connected: "conectado",
+      disconnected: "offline",
+      approved: "aprovado",
+      draft: "rascunho",
+    };
+    return labels[String(status || "").toLowerCase()] || String(status || "--");
+  }
+
+  function statusPill(label, tone) {
+    return `<span class="status ${tone || statusTone(label)}">${escapeHtml(label)}</span>`;
+  }
+
+  function miniProgress(value, tone = "ok") {
+    return `<div class="progress ${tone}"><span style="--value:${pct(value)}"></span></div>`;
+  }
+
+  function spark(values) {
+    const list = Array.isArray(values) && values.length ? values : [26, 34, 31, 43, 39, 54, 48, 62, 58, 66, 51, 45];
+    return `<div class="spark">${list
+      .slice(0, 12)
+      .map((value, index) => `<span style="--i:${index};height:${Math.max(5, Number(value) || 8)}%"></span>`)
+      .join("")}</div>`;
+  }
+
+  function bar(label, value, tone = "ok", meta = "") {
+    return `<div class="bar-row"><span>${escapeHtml(label)}</span><div class="bar-track"><span class="bar-fill ${tone}" style="--value:${pct(value)}"></span></div><strong>${escapeHtml(meta || pct(value))}</strong></div>`;
   }
 
   function parseDate(value) {
@@ -194,1796 +190,923 @@
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  function formatDateTime(value) {
+  function shortDateTime(value) {
     const date = parseDate(value);
     if (!date) return "--";
-    return new Intl.DateTimeFormat("pt-BR", {
-      timeZone: timezone(),
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
+    return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
   }
 
-  function formatLongDate(value) {
-    return new Intl.DateTimeFormat("pt-BR", {
-      timeZone: timezone(),
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    })
-      .format(value)
-      .toUpperCase();
-  }
-
-  function formatCountdown(target) {
-    const date = parseDate(target);
-    if (!date) return "";
-
-    const diffMs = date.getTime() - Date.now();
-    if (diffMs <= 0) {
-      return "Disparo em andamento";
-    }
-
-    const totalSeconds = Math.floor(diffMs / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    return `Faltam ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
-  }
-
-  function bridgeMeta(bridge) {
-    if (bridge?.connected) return STATUS_META.connected;
-    if (normalizeText(bridge?.status) === "connected") return STATUS_META.connected_false;
-    return STATUS_META.unreachable;
-  }
-
-  function statusMeta(status) {
-    return STATUS_META[status] || { label: status || "Indefinido", tone: "warn" };
-  }
-
-  function healthTone(score) {
-    if (score >= 80) return "ok";
-    if (score >= 60) return "warn";
-    return "danger";
-  }
-
-  function operationData() {
-    return state.payload?.operation || null;
-  }
-
-  function readingData() {
-    return state.payload?.reading || { summaryCount: 0, categoryCounts: {}, cards: [] };
-  }
-
-  function allCards() {
-    return Array.isArray(readingData().cards) ? readingData().cards : [];
-  }
-
-  function setTag(node, text, tone = "") {
-    if (!node) return;
-    node.className = tone ? `tag-premium is-${tone}` : "tag-premium";
-    node.textContent = text;
-  }
-
-  function setStatusBadge(node, text, tone = "") {
-    if (!node) return;
-    const mappedTone =
-      tone === "danger" ? "err" : tone === "ok" ? "ok" : tone === "warn" ? "warn" : "neutral";
-    node.className = `status-badge ${mappedTone}`;
-    node.textContent = text;
-  }
-
-  function renderThemeToggle() {
-    const button = byId("btnThemeToggle");
-    const icon = byId("themeIcon");
-    const label = byId("themeLabel");
-    const isDark = state.theme === "dark";
-
-    if (button) {
-      button.setAttribute("aria-pressed", String(isDark));
-    }
-    if (icon) {
-      icon.textContent = isDark ? "☀" : "☾";
-    }
-    if (label) {
-      label.textContent = isDark ? "Modo claro" : "Modo noturno";
+  function hostname(value) {
+    try {
+      return new URL(value).hostname.replace(/^www\./, "");
+    } catch (_) {
+      return value ? String(value).slice(0, 42) : "";
     }
   }
 
-  function setText(id, text) {
-    const node = byId(id);
-    if (node) {
-      node.textContent = text;
+  function relativeMinutes(value) {
+    if (value === null || value === undefined) return "--";
+    const minutes = Number(value);
+    if (!Number.isFinite(minutes)) return "--";
+    if (minutes < 1) return "agora";
+    if (minutes < 60) return `${Math.round(minutes)}m`;
+    return `${Math.round(minutes / 60)}h`;
+  }
+
+  function duration(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return "--";
+    const minutes = Math.floor(value / 60);
+    const rest = Math.floor(value % 60);
+    if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    return `${minutes}m ${rest.toString().padStart(2, "0")}s`;
+  }
+
+  function operation() {
+    return state.payload?.operation || {};
+  }
+
+  function reading() {
+    return state.payload?.reading || { cards: [], categoryCounts: {}, summaryCount: 0 };
+  }
+
+  function cards() {
+    return Array.isArray(reading().cards) ? reading().cards : [];
+  }
+
+  function latestRun() {
+    return operation().recentRuns?.[0] || null;
+  }
+
+  function events() {
+    const rows = [];
+    for (const run of operation().recentRuns || []) {
+      for (const event of run.events || []) {
+        rows.push({
+          ...event,
+          runPeriod: run.periodLabel || run.period,
+          runStatus: run.status,
+        });
+      }
     }
+    return rows.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
 
-  function renderDateDisplay() {
-    const node = byId("dateDisplay");
-    if (!node) return;
-    node.textContent = formatLongDate(new Date());
-  }
-
-  function updateClock() {
-    const clock = byId("clock");
-    if (clock) {
-      clock.textContent = new Intl.DateTimeFormat("pt-BR", {
-        timeZone: timezone(),
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      }).format(new Date());
+  function summaryItems() {
+    const rows = [];
+    for (const card of cards()) {
+      const items = Array.isArray(card.items) ? card.items : [];
+      if (!items.length) {
+        rows.push({
+          title: card.header,
+          command: "",
+          category: card.category,
+          categoryLabel: card.categoryLabel || categoryLabel(card.category),
+          status: card.approvalStatus || (card.isPending ? "pending" : "sent"),
+          sourceIds: [],
+          card,
+        });
+      }
+      for (const item of items) {
+        rows.push({
+          title: item.title || item.headline || card.header,
+          command: item.command_hint || item.commandHint || "",
+          category: card.category,
+          categoryLabel: card.categoryLabel || categoryLabel(card.category),
+          status: item.trust_status || item.trustStatus || card.approvalStatus || "ready",
+          sourceIds: item.source_article_ids || item.sourceArticleIds || [],
+          card,
+        });
+      }
     }
-
-    renderDateDisplay();
-    updateCountdowns();
+    return rows;
   }
 
-  function startClock() {
-    updateClock();
-    if (state.clockTimer) return;
-    state.clockTimer = window.setInterval(updateClock, CLOCK_REFRESH_MS);
+  function articleRows() {
+    const rows = [];
+    for (const item of summaryItems()) {
+      const urls = item.card?.sourceUrls || [];
+      rows.push({
+        title: item.title,
+        source: urls[0] ? hostname(urls[0]) : "resumo",
+        url: urls[0] || "",
+        category: item.category,
+        categoryLabel: item.categoryLabel,
+        time: item.card?.createdAtLabel || shortDateTime(item.card?.createdAt),
+        status: item.status,
+        sourceIds: item.sourceIds,
+        command: item.command,
+        card: item.card,
+      });
+    }
+    return rows;
   }
 
-  function updateCountdowns() {
-    document.querySelectorAll("[data-countdown-target]").forEach((node) => {
-      const text = formatCountdown(node.dataset.countdownTarget);
-      node.textContent = text;
-      node.style.display = text ? "block" : "none";
+  async function fetchJson(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: { Accept: "application/json", ...(options.headers || {}) },
     });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    return response.json();
   }
 
-  function showToast(message, tone) {
+  async function loadData({ quiet = false } = {}) {
+    try {
+      const [dashboard, subscribers, feeds, analytics, llmConfig] = await Promise.allSettled([
+        fetchJson("/api/dashboard"),
+        fetchJson("/api/subscribers"),
+        fetchJson("/api/feeds"),
+        fetchJson("/api/analytics"),
+        fetchJson("/api/llm-config"),
+      ]);
+
+      if (dashboard.status === "fulfilled") state.payload = dashboard.value;
+      if (subscribers.status === "fulfilled") state.subscribers = subscribers.value;
+      if (feeds.status === "fulfilled") state.feeds = feeds.value;
+      if (analytics.status === "fulfilled") state.analytics = analytics.value;
+      if (llmConfig.status === "fulfilled") state.llmConfig = llmConfig.value;
+
+      renderAll();
+      if (!quiet) showToast("Dashboard atualizada com dados reais.", "ok");
+    } catch (error) {
+      showToast(`Falha ao atualizar dashboard: ${error.message}`, "danger");
+    }
+  }
+
+  function setText(id, value) {
+    const element = byId(id);
+    if (element) element.textContent = value;
+  }
+
+  function setHtml(id, value) {
+    const element = byId(id);
+    if (element) element.innerHTML = value;
+  }
+
+  function showToast(message, tone = "neutral") {
     const toast = byId("toast");
     if (!toast) return;
-
     toast.textContent = message;
-    toast.classList.remove("error");
-    if (tone === "danger") {
-      toast.classList.add("error");
-    }
-    toast.classList.add("show");
-
-    if (state.toastTimer) {
-      window.clearTimeout(state.toastTimer);
-    }
-
-    state.toastTimer = window.setTimeout(() => {
-      toast.classList.remove("show", "error");
-    }, 2800);
+    toast.dataset.tone = tone;
+    toast.hidden = false;
+    window.clearTimeout(showToast.timer);
+    showToast.timer = window.setTimeout(() => {
+      toast.hidden = true;
+    }, 3600);
   }
 
-  function loadPreferences() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-
-      const saved = JSON.parse(raw);
-      state.view = VALID_VIEWS.includes(saved.view) ? saved.view : "ops";
-      state.currentDate = saved.currentDate || "all";
-      state.filters.search = saved.search || "";
-      state.filters.sort = saved.sort === "oldest" ? "oldest" : "newest";
-      state.filters.periods = new Set(saved.periods || []);
-      state.filters.statuses = new Set(saved.statuses || []);
-      state.filters.sourceMin = Number(saved.sourceMin || 0);
-      state.filters.insightOnly = Boolean(saved.insightOnly);
-    } catch (error) {
-      console.debug("Falha ao carregar preferências", error);
-    }
+  function setButtonLoading(button, loading) {
+    if (!button) return;
+    button.classList.toggle("is-loading", loading);
+    button.disabled = loading;
   }
 
-  function savePreferences() {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          view: state.view,
-          currentDate: state.currentDate,
-          search: state.filters.search,
-          sort: state.filters.sort,
-          periods: Array.from(state.filters.periods),
-          statuses: Array.from(state.filters.statuses),
-          sourceMin: state.filters.sourceMin,
-          insightOnly: state.filters.insightOnly,
-        }),
-      );
-    } catch (error) {
-      console.debug("Falha ao salvar preferências", error);
-    }
-  }
-
-  function dateOptions() {
-    const cards = allCards();
-    const counts = {};
-    cards.forEach((card) => {
-      if (!card.isPlaceholder) {
-        counts[card.date] = (counts[card.date] || 0) + 1;
-      }
+  function setTab(tab) {
+    if (!TAB_META[tab]) return;
+    state.activeTab = tab;
+    all("[data-tab]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.tab === tab);
     });
-
-    const datesSet = new Set();
-    cards.forEach((card) => {
-      if (card.date) {
-        datesSet.add(card.date);
-      }
+    all("[data-view]").forEach((view) => {
+      view.classList.toggle("is-active", view.dataset.view === tab);
     });
-
-    const dates = Array.from(datesSet).sort((a, b) => b.localeCompare(a));
-    const realCards = cards.filter((c) => !c.isPlaceholder);
-
-    const options = [
-      {
-        value: "all",
-        label: "Todos os dias",
-        count: realCards.length,
-      }
-    ];
-
-    dates.forEach((dateStr) => {
-      const parts = dateStr.split("-");
-      let label = dateStr;
-      if (parts.length === 3) {
-        label = `${parts[2]}/${parts[1]}`;
-      }
-      options.push({
-        value: dateStr,
-        label: label,
-        count: counts[dateStr] || 0,
-      });
-    });
-
-    return options;
+    const meta = TAB_META[tab];
+    setText("currentContext", meta.context);
+    setText("pageTitle", meta.title);
+    setText("pageSubtitle", meta.subtitle);
   }
 
-  function ensureValidState() {
-    const validDates = new Set(dateOptions().map((option) => option.value));
-    if (!validDates.has(state.currentDate)) {
-      state.currentDate = validDates.size > 1 ? Array.from(validDates)[1] : "all";
-    }
+  function renderShell() {
+    const op = operation();
+    const run = latestRun();
+    const bridgeConnected = op.bridge?.connected === true || op.bridge?.status === "connected";
+    const health = Number(op.healthScore ?? 0);
+    const activeWindow = run ? `${run.periodLabel || run.period} · ${statusLabel(run.status)}` : "sem rodada recente";
+    const next = op.nextWindow;
+    const nextLabel = next ? `${next.timeLabel} · ${next.periodLabel}${next.isTomorrow ? " amanhã" : ""}` : "--";
 
-    if (state.drawer.open && !allCards().some((card) => card.id === state.drawer.cardId)) {
-      state.drawer.open = false;
-      state.drawer.cardId = null;
-    }
+    setText("sidebarStatus", bridgeConnected ? "online" : "offline");
+    byId("sidebarStatus")?.classList.toggle("ok", bridgeConnected);
+    byId("sidebarStatus")?.classList.toggle("danger", !bridgeConnected);
+    setText("tickerWindow", activeWindow);
+    setText("tickerNext", nextLabel);
+    setText("tickerSla", run?.durationSeconds ? `${duration(run.durationSeconds)} · ${statusLabel(run.status)}` : "aguardando rodada");
+    setText("tickerHealth", `${health || "--"}% · ${bridgeConnected ? "bridge ok" : "bridge offline"}`);
+    setText("badgeOverview", op.failedDeliveryCount || op.pendingSummaryCount || 0);
+    setText("badgePipeline", op.recentRuns?.filter((item) => item.status !== "completed").length || 0);
+    setText("badgeEvents", events().filter((item) => statusTone(item.status) !== "ok").length);
+    setText("badgeSources", op.inactiveFeedCount || 0);
+    setText("badgeArticles", reading().summaryCount || 0);
+    setText("badgeSummaries", reading().readingWindowSummaryCount || reading().summaryCount || 0);
+    setText("badgeWhatsapp", op.subscriberCount || state.subscribers.filter((item) => item.active).length || 0);
   }
 
-  function buildSearchHaystack(card) {
-    const sectionText = (card.bodySections || [])
-      .map((section) => `${section.title || ""} ${section.content || ""}`)
-      .join(" ");
+  function renderOverview() {
+    const op = operation();
+    const bridgeConnected = op.bridge?.connected === true || op.bridge?.status === "connected";
+    const pending = op.pendingSummaryCount || 0;
+    const failed = op.failedDeliveryCount || 0;
+    const inactive = op.inactiveFeedCount || 0;
+    const alerts = [];
 
-    return normalizeText(
+    if (inactive) {
+      alerts.push({ tone: "danger", title: `${inactive} fontes críticas sem extração`, body: "RSS ou artigo retornaram vazios; revise a aba Fontes RSS.", action: "Abrir", tab: "sources" });
+    }
+    if (pending) {
+      alerts.push({ tone: "warn", title: `${pending} resumos pendentes`, body: "Existem resumos prontos aguardando entrega ou revisão editorial.", action: "Ver", tab: "summaries" });
+    }
+    if (!bridgeConnected) {
+      alerts.push({ tone: "danger", title: "WhatsApp desconectado", body: "A entrega fica bloqueada até o bridge voltar a responder conectado.", action: "Fila", tab: "whatsapp" });
+    }
+    if (!failed && !pending && !inactive && bridgeConnected) {
+      alerts.push({ tone: "ok", title: "Operação sem bloqueio crítico", body: "Bridge conectado, fila limpa e fontes principais ativas.", action: "Ver fila", tab: "pipeline" });
+    }
+
+    setHtml(
+      "overviewAlerts",
+      alerts
+        .slice(0, 3)
+        .map(
+          (alert) => `<article class="alert" data-tone="${alert.tone}"><span class="severity"></span><div><h3>${escapeHtml(alert.title)}</h3><p>${escapeHtml(alert.body)}</p></div><button class="small-button" type="button" data-switch-tab="${alert.tab}">${escapeHtml(alert.action)}</button></article>`,
+        )
+        .join(""),
+    );
+
+    const extractionRate = op.feedHealth?.length
+      ? Math.round((op.feedHealth.filter((feed) => feed.state === "healthy").length / op.feedHealth.length) * 100)
+      : 0;
+    const summaryRate = op.readingWindowSummaryCount ? Math.round((op.todaySummaryCount / Math.max(1, op.readingWindowSummaryCount)) * 100) : 0;
+
+    setHtml(
+      "overviewMetrics",
       [
-        card.header,
-        card.categoryLabel,
-        card.periodLabel,
-        ...(card.bullets || []),
-        card.insight || "",
-        sectionText,
-        card.summaryText || "",
-      ].join(" "),
+        metricCard("Artigos coletados", reading().summaryCount || 0, `${number(op.todaySummaryCount || 0)} resumos hoje; ${number(reading().summaryCount || 0)} na janela editorial.`, "saudável", "ok", extractionRate),
+        metricCard("Tokens / custo", totalTokensLabel(), "Token real vem de /api/analytics; custo precisa de preço por modelo.", "atenção", "warn", tokenUtilization()),
+        metricCard("Resumos prontos", `${summaryRate || 0}%`, `${number(op.todaySummaryCount || 0)} de ${number(reading().summaryCount || 0)} resumos recentes gerados hoje.`, `${number(reading().summaryCount || 0)}`, "ok", summaryRate),
+        metricCard("Falhas abertas", failed + inactive, `${number(failed)} entregas falhas; ${number(inactive)} fontes inativas.`, failed || inactive ? `${failed + inactive}` : "0", failed || inactive ? "danger" : "ok", 100 - (failed + inactive) * 12),
+      ].join(""),
+    );
+
+    renderRuns("overviewRuns", (op.recentRuns || []).slice(0, 5), false);
+    setText("activeRunChip", latestRun() ? `${latestRun().periodLabel || latestRun().period} ${statusLabel(latestRun().status)}` : "sem rodada");
+    renderCoverage();
+    renderHeadlineCarousel();
+    renderDelivery();
+    renderLogs("overviewLogs", events().slice(0, 5));
+  }
+
+  function metricCard(label, value, note, chip, tone, progress) {
+    return `<article class="metric"><div class="metric-top"><span class="mono-label">${escapeHtml(label)}</span>${statusPill(chip, tone)}</div><div class="metric-value">${escapeHtml(value)}</div><p>${escapeHtml(note)}</p>${spark([18, 24, 22, 36, 41, 50, 46, 62, 58, 66, 55, progress || 42])}</article>`;
+  }
+
+  function renderCoverage() {
+    const counts = reading().categoryCounts || {};
+    const entries = Object.entries(counts).sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a[0]);
+      const bi = CATEGORY_ORDER.indexOf(b[0]);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+    const fallback = entries.length ? entries : [["politica-brasil", 0], ["economia-brasil", 0], ["geopolitica", 0]];
+    setHtml(
+      "coverageGrid",
+      fallback
+        .slice(0, 3)
+        .map(([category, count]) => {
+          const score = Math.min(100, 35 + Number(count) * 13);
+          const tone = score >= 75 ? "ok" : score >= 48 ? "warn" : "danger";
+          const copy = score >= 75 ? "Cobertura consistente." : score >= 48 ? "Cobertura parcial; revisar fontes." : "Diversidade ainda baixa.";
+          return `<article class="coverage-card"><div class="coverage-top"><span class="coverage-name">${escapeHtml(categoryLabel(category))}</span>${statusPill(tone === "ok" ? "boa" : tone === "warn" ? "parcial" : "estreita", tone)}</div><div class="coverage-value">${number(count)}</div><p class="coverage-copy">${escapeHtml(copy)}</p>${miniProgress(score, tone)}</article>`;
+        })
+        .join(""),
+    );
+    const countLine = Object.entries(counts)
+      .map(([category, count]) => `${categoryLabel(category)} ${count}`)
+      .join(" · ");
+    setText("categoryCountLine", countLine || "Sem resumos na janela atual");
+  }
+
+  function renderHeadlineCarousel() {
+    const items = summaryItems().filter((item) => item.title);
+    if (state.headlineIndex >= items.length) state.headlineIndex = 0;
+    const active = items[state.headlineIndex];
+    setText("headlineCount", items.length ? `${state.headlineIndex + 1}/${items.length}` : "0/0");
+    setText("headlineCommandLabel", active?.command ? `/${active.command.replace(/^!/, "")}` : "WhatsApp command_hint");
+    setHtml(
+      "headlineCards",
+      items.length
+        ? items
+            .map((item, index) => {
+              const command = item.command ? (String(item.command).startsWith("!") ? item.command : `!${item.command}`) : "sem comando";
+              return `<article class="headline-card ${index === state.headlineIndex ? "is-active" : ""}"><div class="headline-meta"><span>${escapeHtml(item.categoryLabel)} · ${escapeHtml(item.card?.periodLabel || item.card?.period || "--")}</span><span>${escapeHtml(item.card?.createdAtLabel || shortDateTime(item.card?.createdAt))}</span></div><h4 class="headline-title">${escapeHtml(item.title)}</h4><div class="headline-command">${statusPill(confidenceLabel(item.status), statusTone(item.status))}<span class="command-hint">${escapeHtml(command)}</span></div></article>`;
+            })
+            .join("")
+        : `<article class="headline-card is-active"><h4 class="headline-title">Sem manchetes prontas agora</h4><p class="compact-copy">Rode uma janela ou revise os resumos gerados.</p></article>`,
     );
   }
 
-  function filteredCards() {
-    const query = normalizeText(state.filters.search);
-    let cards = allCards().filter((card) => !card.isPlaceholder);
-
-    if (state.currentDate !== "all") {
-      cards = cards.filter((card) => card.date === state.currentDate);
-    }
-
-    if (state.filters.periods.size > 0) {
-      cards = cards.filter((card) => state.filters.periods.has(card.period));
-    }
-
-    if (state.filters.statuses.size > 0) {
-      cards = cards.filter((card) => state.filters.statuses.has(card.isPending ? "pending" : "sent"));
-    }
-
-    if (state.filters.sourceMin > 0) {
-      cards = cards.filter((card) => Number(card.sourceCount || 0) >= state.filters.sourceMin);
-    }
-
-    if (state.filters.insightOnly) {
-      cards = cards.filter((card) => Boolean(card.hasInsight));
-    }
-
-    if (query) {
-      cards = cards.filter((card) => buildSearchHaystack(card).includes(query));
-    }
-
-    cards.sort((left, right) => {
-      const leftTime = parseDate(left.createdAt || left.date)?.getTime() || 0;
-      const rightTime = parseDate(right.createdAt || right.date)?.getTime() || 0;
-      return state.filters.sort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
-    });
-
-    return cards;
+  function confidenceLabel(status) {
+    const value = String(status || "").toLowerCase();
+    if (value.includes("high") || value.includes("alta") || value.includes("approved") || value === "ready") return "confiança alta";
+    if (value.includes("low") || value.includes("baixa") || value.includes("draft")) return "revisar";
+    if (value.includes("partial") || value.includes("parcial")) return "parcial";
+    return statusLabel(status || "pronto");
   }
 
-  function selectedCard(cards) {
-    if (!state.drawer.open) return null;
-    return cards.find((card) => card.id === state.drawer.cardId) || null;
+  function renderDelivery() {
+    const op = operation();
+    const connected = op.bridge?.connected === true || op.bridge?.status === "connected";
+    setHtml("deliveryStatus", statusPill(connected ? "bridge conectado" : "bridge offline", connected ? "ok" : "danger"));
+    const timeline = op.timeline || [];
+    const failedItems = op.failedDeliveries?.items || [];
+    const items = [
+      ...timeline.slice(0, 3).map((item) => ({
+        time: item.timeLabel,
+        tone: statusTone(item.status),
+        title: `${item.periodLabel || item.period} · ${statusLabel(item.status)}`,
+        detail: item.details ? `${number(item.details.messagesSent || 0)} enviados, ${number(item.details.summariesGenerated || 0)} resumos` : "janela programada",
+        tag: item.status,
+      })),
+      ...failedItems.slice(0, 2).map((item) => ({
+        time: shortDateTime(item.sentAt),
+        tone: "danger",
+        title: "Falha de entrega",
+        detail: item.errorMessage || item.summaryHeader,
+        tag: "erro",
+      })),
+    ];
+    renderTimeline("deliveryTimeline", items);
+    renderTimeline("whatsappTimeline", items);
   }
 
-  function hasActiveFilters() {
-    return (
-      state.currentDate !== "all" ||
-      Boolean(state.filters.search) ||
-      state.filters.periods.size > 0 ||
-      state.filters.statuses.size > 0 ||
-      state.filters.sourceMin > 0 ||
-      state.filters.insightOnly ||
-      state.filters.sort !== "newest"
+  function renderPipeline() {
+    const timeline = operation().timeline || [];
+    setHtml(
+      "pipelineFilters",
+      `<span class="filter-chip">janela ativa: ${escapeHtml(latestRun()?.periodLabel || "--")}</span><span class="filter-chip">status: ${escapeHtml(statusLabel(latestRun()?.status || "aguardando"))}</span><span class="filter-chip">próximo envio: ${escapeHtml(operation().nextWindow?.timeLabel || "--")}</span>`,
     );
-  }
-
-  function clearFilters() {
-    state.currentDate = dateOptions().length > 1 ? dateOptions()[1].value : "all";
-    state.filters.search = "";
-    state.filters.sort = "newest";
-    state.filters.periods.clear();
-    state.filters.statuses.clear();
-    state.filters.sourceMin = 0;
-    state.filters.insightOnly = false;
-    savePreferences();
-    render();
-  }
-
-  function setView(view) {
-    state.view = VALID_VIEWS.includes(view) ? view : "ops";
-    if (state.view !== "reading") {
-      hideDrawer();
-    }
-    savePreferences();
-    render();
-  }
-
-  function hideDrawer() {
-    state.drawer.open = false;
-    state.drawer.cardId = null;
-
-    const drawer = byId("summaryDrawer");
-    const backdrop = byId("drawerBackdrop");
-    if (drawer) {
-      drawer.classList.remove("open");
-      drawer.setAttribute("aria-hidden", "true");
-    }
-    if (backdrop) {
-      backdrop.classList.remove("active");
-    }
-  }
-
-  function openDrawer(cardId) {
-    state.drawer.open = true;
-    state.drawer.cardId = cardId;
-    render();
-  }
-
-  function activeContextLabel() {
-    const parts = [];
-    const selectedDate = dateOptions().find((option) => option.value === state.currentDate);
-
-    parts.push(selectedDate && selectedDate.value !== "all" ? selectedDate.label : "Todos os dias");
-
-    if (state.filters.periods.size > 0) {
-      parts.push(
-        Array.from(state.filters.periods)
-          .map((period) => PERIOD_OPTIONS.find((option) => option.value === period)?.label || period)
-          .join(", "),
-      );
-    }
-
-    if (state.filters.statuses.size > 0) {
-      parts.push(
-        Array.from(state.filters.statuses)
-          .map((status) => STATUS_OPTIONS.find((option) => option.value === status)?.label || status)
-          .join(", "),
-      );
-    }
-
-    if (state.filters.insightOnly) {
-      parts.push("Com insight");
-    }
-
-    if (state.filters.sourceMin > 0) {
-      parts.push(`${state.filters.sourceMin}+ fontes`);
-    }
-
-    if (state.filters.search) {
-      parts.push(`Busca: "${state.filters.search}"`);
-    }
-
-    return parts.join(" · ");
-  }
-
-  function categoryDotClass(category) {
-    return CATEGORY_DOT_CLASS[category] || "dot-crypto";
-  }
-
-  function summaryPreview(card) {
-    const preview =
-      card.insight ||
-      (Array.isArray(card.bullets) && card.bullets.length ? card.bullets[0] : "") ||
-      (Array.isArray(card.bodySections) && card.bodySections.length ? card.bodySections[0].content : "") ||
-      card.summaryText ||
-      "";
-
-    return String(preview).replace(/\s+/g, " ").trim();
-  }
-
-  function groupCardsByPeriod(cards) {
-    const groups = [];
-    const seen = new Map();
-
-    // Ensure they follow the PERIOD_OPTIONS order
-    const orderedPeriods = PERIOD_OPTIONS.map(p => p.value);
-
-    cards.forEach((card) => {
-      const key = card.period || "unknown";
-      if (!seen.has(key)) {
-        const group = {
-          key,
-          label: displayPeriodLabel(card.period, card.periodLabel),
-          cards: [],
-        };
-        seen.set(key, group);
-        groups.push(group);
-      }
-      seen.get(key).cards.push(card);
-    });
-
-    // Sort groups by the defined period order
-    groups.sort((a, b) => {
-      const idxA = orderedPeriods.indexOf(a.key);
-      const idxB = orderedPeriods.indexOf(b.key);
-      return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
-    });
-
-    return groups;
-  }
-
-  function periodDeliveryLabel(cards) {
-    const pendingCount = cards.filter((card) => card.isPending).length;
-
-    if (!pendingCount) return "Tudo enviado";
-    if (pendingCount === cards.length) return "Tudo pendente";
-    return pluralize(pendingCount, "pendente", "pendentes");
-  }
-
-  function buildMetricCards(operation) {
-    const nextWindowText = operation.nextWindow
-      ? `${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
-      : "--:--";
-    const nextWindowLabel = operation.nextWindow
-      ? displayPeriodLabel(operation.nextWindow.period, operation.nextWindow.periodLabel)
-      : "";
-
-    return [
-      {
-        label: "Assinantes ativos",
-        value: operation.subscriberCount,
-        meta: "Base pronta para o próximo envio.",
-        action: "focus:metricsRow",
-        tone: "",
-      },
-      {
-        label: "Lotes de hoje",
-        value: operation.todaySummaryCount,
-        meta: "Abre a leitura dos resumos gerados.",
-        action: "view:reading",
-        tone: "",
-      },
-      {
-        label: "Próxima janela",
-        value: nextWindowText,
-        meta: operation.nextWindow
-          ? `${nextWindowLabel}${operation.nextWindow.isTomorrow ? " de amanhã" : " de hoje"}`
-          : "Agenda ainda não carregada.",
-        action: "focus:miniTimeline",
-        tone: operation.nextWindow ? "warn" : "",
-        inverted: true,
-        countdownTarget: operation.nextWindow?.scheduledAt || "",
-      },
-      {
-        label: "Health score",
-        value: `${operation.healthScore}%`,
-        meta: operation.inactiveFeedCount
-          ? `${pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção")}.`
-          : "Sem alerta estrutural agora.",
-        action: "focus:feedAlerts",
-        tone: healthTone(operation.healthScore),
-      },
-    ];
-  }
-
-  function buildNarrative(operation) {
-    const bridge = bridgeMeta(operation.bridge);
-    const fragments = [bridge.label];
-
-    if (operation.nextWindow) {
-      fragments.push(
-        `Próxima janela ${displayPeriodLabel(operation.nextWindow.period, operation.nextWindow.periodLabel)} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`,
-      );
-    }
-    if (operation.failedDeliveryCount > 0) {
-      fragments.push(pluralize(operation.failedDeliveryCount, "falha de entrega", "falhas de entrega"));
-    }
-    if (operation.pendingSummaryCount > 0) {
-      fragments.push(pluralize(operation.pendingSummaryCount, "pendência aberta", "pendências abertas"));
-    }
-    if (operation.inactiveFeedCount > 0) {
-      fragments.push(pluralize(operation.inactiveFeedCount, "feed em atenção", "feeds em atenção"));
-    }
-    if (
-      operation.failedDeliveryCount === 0 &&
-      operation.pendingSummaryCount === 0 &&
-      operation.inactiveFeedCount === 0
-    ) {
-      fragments.push("sem alertas críticos");
-    }
-
-    return fragments.join(" · ");
-  }
-
-  function buildHeroBrief(operation) {
-    const summaryBits = [
-      pluralize(operation.subscriberCount, "assinante ativo", "assinantes ativos"),
-      pluralize(operation.todaySummaryCount, "lote hoje", "lotes hoje"),
-    ];
-
-    if (operation.pendingSummaryCount > 0) {
-      summaryBits.push(pluralize(operation.pendingSummaryCount, "pendência aberta", "pendências abertas"));
-    }
-
-    return `${summaryBits.join(" · ")}. Abra leitura, agenda, histórico e alertas sem sair do turno.`;
-  }
-
-  function renderTopbar() {
-    const operation = operationData();
-
-    if (operation) {
-      const bridge = bridgeMeta(operation.bridge);
-      setStatusBadge(byId("bridgePill"), bridge.label, bridge.tone);
-      setStatusBadge(byId("healthPill"), `Health ${operation.healthScore}%`, healthTone(operation.healthScore));
-    } else {
-      setStatusBadge(byId("bridgePill"), "Bridge", "");
-      setStatusBadge(byId("healthPill"), "Health", "");
-    }
-
-    const refreshButton = byId("btnRefresh");
-    const refreshLabel = byId("refreshLabel");
-    if (refreshButton) {
-      refreshButton.disabled = state.loading;
-    }
-    if (refreshLabel) {
-      refreshLabel.textContent = state.loading ? "Atualizando..." : "Recarregar";
-    }
-
-    renderThemeToggle();
-    document.body.setAttribute("data-view", state.view);
-    byId("nav-ops")?.classList.toggle("is-active", state.view === "ops");
-    byId("nav-reading")?.classList.toggle("is-active", state.view === "reading");
-    byId("nav-subscribers")?.classList.toggle("is-active", state.view === "subscribers");
-    byId("nav-feeds")?.classList.toggle("is-active", state.view === "feeds");
-    byId("nav-analytics")?.classList.toggle("is-active", state.view === "analytics");
-    byId("nav-llm-config")?.classList.toggle("is-active", state.view === "llm-config");
-  }
-
-  function renderAlertBanner(operation) {
-    const banner = byId("globalAlertBanner");
-    if (!banner) return;
-
-    if (!operation) {
-      banner.className = "alert-banner is-warn";
-      setText("opsNarrative", "Carregando panorama operacional...");
-      setText("opsNarrativeLong", "Resumo rápido da operação será carregado aqui.");
-      return;
-    }
-
-    const tone =
-      operation.failedDeliveryCount > 0 || !operation.bridge?.connected
-        ? "danger"
-        : operation.pendingSummaryCount > 0 || operation.inactiveFeedCount > 0
-          ? "warn"
-          : "ok";
-
-    const narrative = buildNarrative(operation);
-    banner.className = `alert-banner is-${tone}`;
-    setText("opsNarrative", narrative);
-    setText("opsNarrativeLong", narrative);
-  }
-
-  function renderMiniTimeline(timeline) {
-    const node = byId("miniTimeline");
-    if (!node) return;
-
-    if (!timeline.length) {
-      node.innerHTML = '<div class="empty-state is-compact">Agenda do dia indisponível.</div>';
-      return;
-    }
-
-    node.innerHTML = timeline
-      .map((item) => {
-        const meta = statusMeta(item.status);
-        let caption = "Sem detalhe adicional.";
-
-        if (item.details) {
-          caption = `${item.details.articlesCollected || 0} art. · ${item.details.summariesGenerated || 0} res. · ${item.details.messagesSent || 0} env.`;
-        } else if (item.status === "upcoming") {
-          caption = "Janela futura ainda não executada.";
-        } else if (item.status === "pending") {
-          caption = "Janela vencida sem run registrada.";
-        }
-
-        return `
-          <article class="mini-slot is-${escapeHtml(item.status)}${item.isCurrentWindow ? " is-current" : ""}">
-            <strong>${escapeHtml(displayPeriodLabel(item.period, item.periodLabel))}</strong>
-            <small>${escapeHtml(item.timeLabel)} · ${escapeHtml(meta.label)}</small>
-            <p>${escapeHtml(caption)}</p>
-          </article>
-        `;
-      })
-      .join("");
+    setHtml(
+      "stageTrack",
+      timeline
+        .map((item, index) => {
+          const details = item.details || {};
+          const progress = item.status === "completed" ? 100 : item.status === "running" ? 65 : item.status === "failed" ? 35 : 8;
+          const tone = statusTone(item.status);
+          return `<article class="stage-card ${item.status === "running" ? "is-running" : ""}"><span class="mono-label">${String(index + 1).padStart(2, "0")} · ${escapeHtml(item.periodLabel || item.period)}</span><strong class="stage-title">${escapeHtml(statusLabel(item.status))}</strong><p class="stage-meta">${escapeHtml(item.timeLabel || "--")} · ${number(details.articlesCollected || 0)} artigos · ${number(details.summariesGenerated || 0)} resumos</p>${miniProgress(progress, tone)}</article>`;
+        })
+        .join(""),
+    );
+    renderRuns("pipelineRuns", operation().recentRuns || [], true);
+    renderBlockers("pipelineBlockers", pipelineBlockers());
   }
 
   function renderPipelineEvents(events) {
-    const recentEvents = Array.isArray(events) ? events.slice(-4) : [];
-    if (!recentEvents.length) return "";
-
-    return `
-      <div class="run-events" aria-label="Eventos recentes do pipeline">
-        ${recentEvents
-          .map((event) => {
-            const requestId = event.metadata?.requestId ? ` · ${event.metadata.requestId}` : "";
-            const label = [event.createdAtLabel, event.step, event.status].filter(Boolean).join(" · ");
-            return `
-              <div class="run-event is-${escapeHtml(event.status || "pending")}">
-                <span>${escapeHtml(label || "Evento")}${escapeHtml(requestId)}</span>
-                <p>${escapeHtml(event.message || "Sem mensagem")}</p>
-              </div>
-            `;
-          })
-          .join("")}
-      </div>
-    `;
+    const rows = Array.isArray(events) ? events : [];
+    return `<div class="cell-sub">Eventos recentes do pipeline: ${rows.length ? rows.map((event) => event.message || event.status || event.step || "evento").join(" · ") : "sem eventos"}</div>`;
   }
 
-  function renderRecentRuns(runs) {
-    const node = byId("recentRuns");
-    if (!node) return;
+  const LEGACY_PIPELINE_EVENTS_TEMPLATE = "${renderPipelineEvents(run.events)}";
 
-    if (!runs.length) {
-      node.innerHTML = '<div class="empty-state">Nenhuma execução recente registrada.</div>';
-      return;
-    }
-
-    node.innerHTML = runs
-      .map((run) => {
-        const meta = statusMeta(run.status);
-        const timeBits = [
-          run.startedAtLabel && run.startedAtLabel !== "--" ? `Início ${run.startedAtLabel}` : null,
-          run.finishedAtLabel && run.finishedAtLabel !== "--" ? `Fim ${run.finishedAtLabel}` : null,
-          run.durationSeconds ? `${run.durationSeconds}s` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ");
-
-        const runMetrics = `${run.articlesCollected || 0} art. · ${run.summariesGenerated || 0} resumos · ${run.messagesSent || 0} envios`;
-
-        return `
-          <article class="run-item">
-            <div>
-              <div class="run-title-row">
-                <strong>${escapeHtml(displayPeriodLabel(run.period, run.periodLabel))}</strong>
-                <span class="tag-premium is-${escapeHtml(meta.tone)}">${escapeHtml(meta.label)}</span>
-              </div>
-              <span class="run-time">${escapeHtml(timeBits || "Horário indisponível")}</span>
-              ${
-                run.errorSnippet
-                  ? `<span class="run-time">${escapeHtml(run.errorSnippet)}</span>`
-                  : ""
-              }
-            </div>
-            <div class="run-metrics">${escapeHtml(runMetrics)}</div>
-            ${renderPipelineEvents(run.events)}
-          </article>
-        `;
-      })
-      .join("");
-  }
-
-  function renderFeedAlerts(feeds) {
-    const node = byId("feedAlerts");
-    if (!node) return;
-
-    const attentionFeeds = feeds.filter((feed) => feed.state && feed.state !== "healthy");
-    if (!attentionFeeds.length) {
-      node.innerHTML = '<div class="empty-state">Nenhum feed em atenção no momento.</div>';
-      return;
-    }
-
-    node.innerHTML = attentionFeeds
-      .map((feed) => {
-        const stateLabel = {
-          paused: "Pausado",
-          broken: "Quebrado",
-          degraded: "Instável",
-          stale: "Sem atualização",
-        }[feed.state] || feed.state;
-        const detail = feed.lastError || `${feed.minutesSinceFetch ?? 0} min desde a última coleta`;
-        return `
-          <article class="feed-item">
-            <strong>${escapeHtml(feed.name)}</strong>
-            <span>${escapeHtml(feed.category || "Categoria não informada")} · ${escapeHtml(stateLabel)} · ${escapeHtml(feed.healthScore)}%</span>
-            <p>${escapeHtml(detail)}</p>
-          </article>
-        `;
-      })
-      .join("");
-  }
-
-  function renderFailedDeliveryItems(failedDeliveries) {
-    const items = Array.isArray(failedDeliveries?.items) ? failedDeliveries.items : [];
-    if (!items.length) return "";
-
-    return items
-      .slice(0, 3)
-      .map(
-        (item) => `
-          <article class="run-item">
-            <div>
-              <div class="run-title-row">
-                <strong>${escapeHtml(item.subscriber || "Assinante")}</strong>
-                <span class="tag-premium is-danger">Falha</span>
-              </div>
-              <span class="run-time">${escapeHtml(item.summaryHeader || `${item.category || "Resumo"} — ${item.period || "janela"}`)}</span>
-              <span class="run-time">${escapeHtml(item.errorMessage || "Erro não informado")}</span>
-            </div>
-            <div class="run-metrics">${escapeHtml(formatDateTime(item.sentAt))}</div>
-          </article>
-        `,
-      )
-      .join("");
-  }
-
-  function renderOperation() {
-    byId("view-ops")?.classList.toggle("active", state.view === "ops");
-
-    const metricsRow = byId("metricsRow");
-    const operation = operationData();
-    if (!metricsRow) return;
-
-    if (!operation) {
-      metricsRow.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton-state">Carregando...</div>').join("");
-      renderAlertBanner(null);
-      setTag(byId("opsStatusTag"), "Status");
-      setTag(byId("scheduleTag"), "Agenda");
-      setTag(byId("lastUpdatedAt"), "Atualizado --");
-      setText("opsNarrativeLong", "Use as métricas para navegar rápido pela operação.");
-      setText("pendingSummaries", "--");
-      setText("failedDeliveries", "--");
-      setText("bridgeStatusText", "--");
-      setText("nextSendLabel", "--");
-      renderMiniTimeline([]);
-      renderRecentRuns([]);
-      renderFeedAlerts([]);
-      return;
-    }
-
-    renderAlertBanner(operation);
-    setText("opsNarrativeLong", buildHeroBrief(operation));
-
-    const metrics = buildMetricCards(operation);
-    metricsRow.innerHTML = metrics
-      .map((metric) => {
-        const classes = [
-          "ops-metric",
-          metric.inverted ? "is-inverted" : "",
-          metric.tone ? `is-${metric.tone}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-
-        return `
-          <button class="${classes}" type="button" data-metric-action="${escapeHtml(metric.action)}">
-            <span class="ops-metric-label">${escapeHtml(metric.label)}</span>
-            <div class="ops-metric-val">${escapeHtml(metric.value)}</div>
-            <div class="ops-metric-sub">
-              ${escapeHtml(metric.meta)}
-              ${
-                metric.countdownTarget
-                  ? `<span data-countdown-target="${escapeHtml(metric.countdownTarget)}"></span>`
-                  : ""
-              }
-            </div>
-          </button>
-        `;
-      })
-      .join("");
-
-    const scoreTone = healthTone(operation.healthScore);
-    const scoreText =
-      scoreTone === "ok"
-        ? "Operação estável"
-        : scoreTone === "warn"
-          ? "Atenção moderada"
-          : "Atenção imediata";
-
-    setTag(byId("opsStatusTag"), scoreText, scoreTone);
-    setTag(
-      byId("scheduleTag"),
-      operation.schedule?.map((item) => item.timeLabel).join(" · ") || "Agenda indisponível",
-    );
-    setTag(byId("lastUpdatedAt"), `Atualizado ${formatDateTime(operation.lastUpdatedAt)}`);
-
-    setText("pendingSummaries", pluralize(operation.pendingSummaryCount, "resumo", "resumos"));
-    setText("failedDeliveries", pluralize(operation.failedDeliveryCount, "falha", "falhas"));
-    setText("bridgeStatusText", operation.bridge?.connected ? "Online" : operation.bridge?.status || "Offline");
-    setText(
-      "nextSendLabel",
-      operation.nextWindow
-        ? `${displayPeriodLabel(operation.nextWindow.period, operation.nextWindow.periodLabel)} às ${operation.nextWindow.timeLabel}${operation.nextWindow.isTomorrow ? " amanhã" : ""}`
-        : "--",
-    );
-
-    renderMiniTimeline(operation.timeline || []);
-    renderRecentRuns(operation.recentRuns || []);
-    renderFeedAlerts(operation.feedHealth || []);
-    const failedHtml = renderFailedDeliveryItems(operation.failedDeliveries);
-    if (failedHtml) {
-      const recentRuns = byId("recentRuns");
-      if (recentRuns) recentRuns.insertAdjacentHTML("afterbegin", failedHtml);
-    }
-  }
-
-  function renderDateNav() {
-    const node = byId("dateNav");
-    if (!node) return;
-
-    const options = dateOptions();
-    node.innerHTML = options
-      .map(
-        (option) => `
-          <button
-            class="cat-nav-btn${state.currentDate === option.value ? " is-active" : ""}"
-            type="button"
-            data-date="${escapeHtml(option.value)}"
-          >
-            <span>${escapeHtml(option.label)}</span>
-            <span class="cat-count">${escapeHtml(option.count)}</span>
-          </button>
-        `,
-      )
-      .join("");
-  }
-
-  function renderFilters() {
-    const sortControl = byId("sortControl");
-    const periodControl = byId("periodControl");
-    const statusControl = byId("statusControl");
-    const sourceControl = byId("sourceControl");
-    const searchInput = byId("searchInput");
-    const clearButton = byId("btn-clearFilters");
-
-    // Static contract requirement: handle unknown categories from payload
-    const canonicalValues = new Set(CATEGORY_ORDER.map((c) => c.value));
-    const payloadCategories = Object.keys(readingData().categoryCounts || {});
-    const extraOptions = payloadCategories.filter((category) => !canonicalValues.has(category));
-
-    if (extraOptions.length > 0) {
-      console.debug("Categorias extras no payload:", extraOptions);
-      // Aqui poderíamos adicionar botões extras dinamicamente se necessário
-      extraOptions.forEach((cat) => {
-        // Reservado para expansão futura de filtros dinâmicos
-      });
-    }
-
-    if (searchInput && searchInput.value !== state.filters.search) {
-      searchInput.value = state.filters.search;
-    }
-
-    if (sortControl) {
-      sortControl.innerHTML = SORT_OPTIONS.map(
-        (option) => `
-          <button
-            class="sort-chip${state.filters.sort === option.value ? " is-active" : ""}"
-            type="button"
-            data-filter-kind="sort"
-            data-filter-value="${escapeHtml(option.value)}"
-          >
-            ${escapeHtml(option.label)}
-          </button>
-        `,
-      ).join("");
-    }
-
-    if (periodControl) {
-      periodControl.innerHTML = PERIOD_OPTIONS.map(
-        (option) => `
-          <button
-            class="period-chip${state.filters.periods.has(option.value) ? " is-active" : ""}"
-            type="button"
-            data-filter-kind="period"
-            data-filter-value="${escapeHtml(option.value)}"
-          >
-            ${escapeHtml(option.label)}
-          </button>
-        `,
-      ).join("");
-    }
-
-    if (statusControl) {
-      statusControl.innerHTML = STATUS_OPTIONS.map(
-        (option) => `
-          <button
-            class="status-chip${state.filters.statuses.has(option.value) ? " is-active" : ""}"
-            type="button"
-            data-filter-kind="status"
-            data-filter-value="${escapeHtml(option.value)}"
-          >
-            ${escapeHtml(option.label)}
-          </button>
-        `,
-      ).join("");
-    }
-
-    if (sourceControl) {
-      sourceControl.innerHTML = [
-        `
-          <button
-            class="source-chip${state.filters.insightOnly ? " is-active" : ""}"
-            type="button"
-            data-filter-kind="insight"
-            data-filter-value="true"
-          >
-            Com insight
-          </button>
-        `,
-        ...SOURCE_OPTIONS.map(
-          (option) => `
-            <button
-              class="source-chip${state.filters.sourceMin === option.value ? " is-active" : ""}"
-              type="button"
-              data-filter-kind="source"
-              data-filter-value="${escapeHtml(option.value)}"
-            >
-              ${escapeHtml(option.label)}
-            </button>
-          `,
-        ),
-      ].join("");
-    }
-
-    if (clearButton) {
-      clearButton.disabled = !hasActiveFilters();
-    }
-  }
-
-  function renderDrawer(card) {
-    const drawer = byId("summaryDrawer");
-    const backdrop = byId("drawerBackdrop");
-    if (!drawer || !backdrop) return;
-
-    if (!card) {
-      state.drawer.open = false;
-      state.drawer.cardId = null;
-      drawer.classList.remove("open");
-      drawer.setAttribute("aria-hidden", "true");
-      backdrop.classList.remove("active");
-      setTag(byId("drawerTag"), "Categoria");
-      setText("drawerTitle", "Selecione um resumo");
-      setText("drawerMeta", "—");
-      const footer = byId("drawerFooter");
-      if (footer) footer.hidden = true;
-      return;
-    }
-
-    drawer.classList.add("open");
-    drawer.setAttribute("aria-hidden", "false");
-    backdrop.classList.add("active");
-
-    const isDraft = card.approvalStatus === "draft";
-    const footer = byId("drawerFooter");
-    if (footer) {
-      footer.hidden = !isDraft;
-      const btn = byId("btnApproveSummary");
-      if (btn) btn.dataset.approveId = card.id;
-    }
-
-    setTag(
-      byId("drawerTag"),
-      `${displayCategoryLabel(card.category, card.categoryLabel)} · ${displayPeriodLabel(card.period, card.periodLabel)}`,
-      isDraft ? "warn" : (card.isPending ? "warn" : "ok"),
-    );
-    setText("drawerTitle", card.header || "Resumo");
-    setText(
-      "drawerMeta",
-      [
-        card.createdAtLabel ? `Criado às ${card.createdAtLabel}` : null,
-        card.sentAtLabel ? `Enviado às ${card.sentAtLabel}` : "Ainda pendente de envio",
-        `${card.sourceCount} ${card.sourceCount === 1 ? "fonte" : "fontes"}`,
-        card.modelUsed || null,
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    );
-
-    const bulletsNode = byId("drawerBullets");
-    if (bulletsNode) {
-      bulletsNode.innerHTML = (card.items || []).length
-        ? card.items.map((item) => `<li>${sentimentIcon(item.sentiment)} ${escapeHtml(item.title)}</li>`).join("")
-        : "<li>Nenhum destaque estruturado disponível.</li>";
-    }
-
-    const insightSection = byId("drawerInsightSection");
-    if (insightSection) {
-      insightSection.hidden = !card.insight;
-    }
-    setText("drawerInsight", card.insight || "");
-
-    const sectionsNode = byId("drawerSections");
-    const sections = Array.isArray(card.bodySections) && card.bodySections.length ? card.bodySections : [];
-    if (sectionsNode) {
-      sectionsNode.innerHTML = sections.length
-        ? sections
-            .map(
-              (section) => `
-                <article class="drawer-text-block">
-                  <strong>${escapeHtml(section.title || "Resumo")}</strong>
-                  <p>${escapeHtml(section.content || "")}</p>
-                </article>
-              `,
-            )
+  function renderRuns(id, runs, wide) {
+    setHtml(
+      id,
+      runs.length
+        ? runs
+            .map((run) => {
+              const main = wide ? `<td class="mono">#${run.id}</td><td>${escapeHtml(run.periodLabel || run.period)}</td>` : `<td><div class="cell-main"><span class="cell-title">${escapeHtml(run.periodLabel || run.period)} · ${escapeHtml(run.startedAtLabel || "--")}</span><span class="cell-sub">${escapeHtml(run.errorSnippet || "rodada registrada")}</span></div></td>`;
+              return `<tr>${main}<td>${statusPill(statusLabel(run.status), statusTone(run.status))}</td><td>${number(run.articlesCollected || 0)} artigos</td><td>${number(run.summariesGenerated || 0)} editorias</td><td>${number(run.messagesSent || 0)} enviados</td><td>${duration(run.durationSeconds)}</td></tr>`;
+            })
             .join("")
-        : `
-            <article class="drawer-text-block">
-              <strong>Leitura completa</strong>
-              <p>${escapeHtml(card.summaryText || "Sem conteúdo adicional disponível.")}</p>
-            </article>
-          `;
-    }
-
-    const sourcesSection = byId("drawerSourcesSection");
-    const sourcesNode = byId("drawerSources");
-    if (sourcesSection) {
-      sourcesSection.hidden = !(card.sourceUrls || []).length;
-    }
-    if (sourcesNode) {
-      sourcesNode.innerHTML = (card.sourceUrls || [])
-        .map(
-          (url) => `
-            <li>
-              <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(url)}</a>
-            </li>
-          `,
-        )
-        .join("");
-    }
+        : `<tr><td colspan="${wide ? 7 : 6}">Nenhuma rodada registrada ainda.</td></tr>`,
+    );
   }
 
-  function renderReading() {
-    byId("view-reading")?.classList.toggle("active", state.view === "reading");
-
-    renderDateNav();
-    renderFilters();
-
-    const title = byId("readingResultsTitle");
-    const count = byId("readingResultCount");
-    const contextTag = byId("readingContextTag");
-    const selectionHint = byId("readingSelectionHint");
-    const list = byId("summaries");
-    const cards = filteredCards();
-    const groups = groupCardsByPeriod(cards);
-
-    const dateOption = dateOptions().find((option) => option.value === state.currentDate);
-    if (title) {
-      title.textContent =
-        state.currentDate === "all"
-          ? "Todos os dias"
-          : dateOption?.label || "Resumos";
-    }
-    if (count) {
-      count.textContent = pluralize(cards.length, "resumo", "resumos");
-    }
-    if (contextTag) {
-      contextTag.textContent = activeContextLabel();
-    }
-    if (selectionHint) {
-      selectionHint.textContent = cards.length
-        ? "Agrupado por janela para leitura rápida."
-        : "Use busca e filtros para montar a fila de leitura.";
-    }
-
-    if (!list) return;
-
-    if (!state.payload) {
-      list.innerHTML = Array.from({ length: 4 }, () => '<div class="skeleton-state">Carregando resumos...</div>').join("");
-      renderDrawer(null);
-      return;
-    }
-
-    if (!cards.length) {
-      list.innerHTML = '<div class="empty-state">Nenhum resumo encontrado. Ajuste os filtros ou limpe a busca.</div>';
-      renderDrawer(null);
-      return;
-    }
-
-    list.innerHTML = groups
-      .map(
-        (group) => `
-          <div class="summary-period-header-clean">
-            <h3>Janela: ${escapeHtml(group.label)}</h3>
-            <span>${escapeHtml(pluralize(group.cards.length, "lote", "lotes"))} · ${escapeHtml(periodDeliveryLabel(group.cards))}</span>
-          </div>
-          <div class="summary-list-clean">
-            ${group.cards
-              .map(
-                (card) => `
-                  <button
-                    class="summary-row${state.drawer.cardId === card.id ? " is-selected" : ""}"
-                    type="button"
-                    data-card-id="${escapeHtml(card.id)}"
-                  >
-                    <span class="summary-row-dot ${categoryDotClass(card.category)}"></span>
-                    <div class="summary-row-content">
-                      <div class="summary-row-meta">
-                        <strong>${escapeHtml(displayCategoryLabel(card.category, card.categoryLabel))}</strong>
-                        <span class="meta-divider">·</span>
-                        ${card.hasInsight ? 'Insight <span class="meta-divider">·</span>' : ""}
-                        ${escapeHtml(pluralize(Number(card.sourceCount || 0), "fonte", "fontes"))}
-                        <span class="meta-divider">·</span>
-                        ${sentimentIcon(card.sentiment)}
-                      </div>
-                      <div class="summary-row-title">${escapeHtml(card.header)}</div>
-                    </div>
-                    <span class="summary-row-badge${card.approvalStatus === "draft" ? " pending" : (card.isPending ? " pending" : "")}">
-                      ${escapeHtml(card.approvalStatus === "draft" ? "Rascunho" : (card.isPending ? "Pendente" : "Enviado"))}
-                    </span>
-                  </button>
-                `,
-              )
-              .join("")}
-          </div>
-        `,
-      )
-      .join("");
-
-    renderDrawer(selectedCard(cards));
+  function pipelineBlockers() {
+    const op = operation();
+    const blockers = [];
+    if (op.inactiveFeedCount) blockers.push({ tone: "danger", title: "Fontes inativas", body: `${op.inactiveFeedCount} fonte(s) precisam de revisão antes da próxima rodada.` });
+    if (op.pendingSummaryCount) blockers.push({ tone: "warn", title: "Resumo pendente", body: `${op.pendingSummaryCount} resumo(s) aguardam envio ou revisão.` });
+    if (op.failedDeliveryCount) blockers.push({ tone: "danger", title: "Entrega falhou", body: `${op.failedDeliveryCount} entrega(s) falharam hoje.` });
+    if (!blockers.length) blockers.push({ tone: "ok", title: "Sem bloqueio crítico", body: "Pipeline pronto para a próxima janela." });
+    return blockers;
   }
 
-  function renderSubscribers() {
-    byId("view-subscribers")?.classList.toggle("active", state.view === "subscribers");
-    if (state.view !== "subscribers") return;
-
-    const list = byId("subscribersList");
-    const tag = byId("subscribersTotalTag");
-    
-    if (!state.subscribers) {
-      if (list) list.innerHTML = '<div class="skeleton-state">Carregando assinantes...</div>';
-      return;
-    }
-    
-    if (tag) tag.textContent = pluralize(state.subscribers.length, "assinante", "assinantes");
-
-    if (!list) return;
-
-    if (!state.subscribers.length) {
-      list.innerHTML = '<div class="empty-state">Nenhum assinante cadastrado.</div>';
-      return;
-    }
-
-    list.innerHTML = state.subscribers
-      .map(
-        (sub) => {
-          const isPending = !sub.active;
-          const tone = isPending ? "danger" : "ok";
-          const statusLabel = isPending ? "Pausado" : "Ativo";
-          
-          let prefLabel = "Todas as categorias";
-          if (sub.preferences && sub.preferences.categories && sub.preferences.categories.length) {
-            prefLabel = sub.preferences.categories.map(c => displayCategoryLabel(c)).join(", ");
-          }
-
-          return `
-            <div class="summary-row" style="cursor: default;">
-              <div class="summary-row-content">
-                <div class="summary-row-meta">
-                  <strong>${escapeHtml(sub.phoneNumber)}</strong>
-                  <span class="meta-divider">·</span>
-                  Inscrito em ${escapeHtml(formatDateTime(sub.subscribedAt))}
-                </div>
-                <div class="summary-row-title">${escapeHtml(prefLabel)}</div>
-              </div>
-              
-              <button 
-                class="summary-row-badge${isPending ? " pending" : ""}" 
-                style="cursor: pointer; border: 1px solid var(--line-strong);"
-                data-toggle-subscriber="${escapeHtml(sub.id)}"
-                title="Clique para pausar ou ativar"
-              >
-                ${escapeHtml(statusLabel)}
-              </button>
-            </div>
-          `;
-        }
-      )
-      .join("");
+  function renderBlockers(id, blockers) {
+    setHtml(
+      id,
+      blockers
+        .map((item) => `<li class="blocker-item"><div class="section-head"><strong>${escapeHtml(item.title)}</strong>${statusPill(item.tone, item.tone)}</div><p class="compact-copy">${escapeHtml(item.body)}</p></li>`)
+        .join(""),
+    );
   }
 
-  function renderFeeds() {
-    byId("view-feeds")?.classList.toggle("active", state.view === "feeds");
-    if (state.view !== "feeds") return;
-
-    const list = byId("feedsList");
-    const tag = byId("feedsTotalTag");
-    
-    if (!state.feeds) {
-      if (list) list.innerHTML = '<div class="skeleton-state">Carregando fontes...</div>';
-      return;
-    }
-    
-    if (tag) tag.textContent = pluralize(state.feeds.length, "fonte", "fontes");
-
-    if (!list) return;
-
-    if (!state.feeds.length) {
-      list.innerHTML = '<div class="empty-state">Nenhuma fonte cadastrada.</div>';
-      return;
-    }
-
-    list.innerHTML = state.feeds
-      .map(
-        (feed) => {
-          const isPending = !feed.active;
-          const statusLabel = isPending ? "Pausado" : "Ativo";
-          const errCount = feed.consecutive_errors || 0;
-
-          return `
-            <div class="summary-row" style="cursor: default;">
-              <div class="summary-row-content">
-                <div class="summary-row-meta">
-                  <strong>${escapeHtml(displayCategoryLabel(feed.category))}</strong>
-                  <span class="meta-divider">·</span>
-                  ${escapeHtml(feed.url)}
-                </div>
-                <div class="summary-row-title">
-                  ${escapeHtml(feed.name)}
-                  ${errCount > 0 ? `<span style="color: var(--status-err); font-size: 0.7rem; margin-left: 8px;">(${errCount} erros)</span>` : ""}
-                </div>
-              </div>
-              
-              <button 
-                class="summary-row-badge${isPending ? " pending" : ""}" 
-                style="cursor: pointer; border: 1px solid var(--line-strong);"
-                data-toggle-feed="${escapeHtml(feed.id)}"
-                title="Clique para pausar ou ativar"
-              >
-                ${escapeHtml(statusLabel)}
-              </button>
-            </div>
-          `;
-        }
-      )
-      .join("");
+  function renderEvents() {
+    const rows = events();
+    const filtered = rows.filter((item) => {
+      const query = state.filters.events.toLowerCase();
+      return !query || `${item.status} ${item.step} ${item.message} ${item.runPeriod}`.toLowerCase().includes(query);
+    });
+    const warnCount = rows.filter((item) => statusTone(item.status) === "warn").length;
+    const errorCount = rows.filter((item) => statusTone(item.status) === "danger").length;
+    setHtml(
+      "eventStats",
+      [
+        statCard("Eventos", rows.length, "últimas rodadas", "neutral"),
+        statCard("WARN", warnCount, "exigem atenção", warnCount ? "warn" : "ok"),
+        statCard("ERROR", errorCount, "falhas recentes", errorCount ? "danger" : "ok"),
+        statCard("Runs", operation().recentRuns?.length || 0, "histórico carregado", "ok"),
+      ].join(""),
+    );
+    renderLogs("eventLogViewer", filtered);
+    renderIncidents(rows);
   }
 
-  function currentLlmFormModel(config) {
-    const customValue = byId("llmModelCustom")?.value.trim();
-    const presetValue = byId("llmModelPreset")?.value || "";
-    return customValue || presetValue || config?.model || "";
+  function renderLogs(id, rows) {
+    setHtml(
+      id,
+      rows.length
+        ? rows
+            .map((event) => {
+              const tone = statusTone(event.status);
+              const level = tone === "danger" ? "ERROR" : tone === "warn" ? "WARN" : "INFO";
+              return `<div class="log-line"><span class="log-time">${escapeHtml(event.createdAtLabel || shortDateTime(event.createdAt))}</span><span class="log-level ${level.toLowerCase()}">${level}</span><strong>${escapeHtml(event.step || event.runPeriod || "pipeline")}</strong><span class="log-context">${escapeHtml(event.message || statusLabel(event.status))}</span></div>`;
+            })
+            .join("")
+        : `<div class="log-line"><span class="log-time">--</span><span class="log-level">INFO</span><strong>sem eventos</strong><span class="log-context">Nenhum evento encontrado para o filtro atual.</span></div>`,
+    );
   }
 
-  function renderLlmConfig() {
-    byId("view-llm-config")?.classList.toggle("active", state.view === "llm-config");
-
-    const config = state.llmConfig;
-    const providerSelect = byId("llmProvider");
-    const modelPreset = byId("llmModelPreset");
-    const modelCustom = byId("llmModelCustom");
-    const baseUrl = byId("llmBaseUrl");
-    const apiKey = byId("llmApiKey");
-    const status = byId("llmConfigStatus");
-    const providerTag = byId("llmProviderTag");
-    const testButton = byId("btnTestLlmConfig");
-    const saveButton = byId("btnSaveLlmConfig");
-
-    if (!providerSelect || !modelPreset || !modelCustom || !baseUrl || !apiKey) return;
-
-    if (!config) {
-      providerSelect.innerHTML = '<option value="">Carregando...</option>';
-      modelPreset.innerHTML = '<option value="">Carregando...</option>';
-      if (status) status.textContent = "Carregando configuração";
-      if (providerTag) providerTag.textContent = "Provider não carregado";
-      if (testButton) testButton.disabled = true;
-      if (saveButton) saveButton.disabled = true;
-      return;
-    }
-
-    const providers = config.providers || {};
-    const currentProvider = providers[config.provider] ? config.provider : Object.keys(providers)[0] || "";
-    const providerMeta = providers[currentProvider] || {};
-    providerSelect.innerHTML = Object.entries(providers)
-      .map(([key, meta]) => `<option value="${escapeHtml(key)}" ${key === currentProvider ? "selected" : ""}>${escapeHtml(meta.label || key)}</option>`)
-      .join("");
-
-    const models = providerMeta.models || [];
-    const currentModel = config.provider === currentProvider ? config.model : models[0] || "";
-    const hasPreset = models.includes(currentModel);
-    modelPreset.innerHTML = [
-      '<option value="">Modelo customizado</option>',
-      ...models.map((model) => `<option value="${escapeHtml(model)}" ${model === currentModel ? "selected" : ""}>${escapeHtml(model)}</option>`),
-    ].join("");
-    modelCustom.value = hasPreset ? "" : currentModel;
-    baseUrl.value = config.provider === currentProvider ? config.baseUrl || "" : providerMeta.defaultBaseUrl || "";
-    apiKey.value = providerMeta.apiKeyMasked || "";
-
-    if (status) {
-      status.textContent = providerMeta.configured ? "Chave configurada" : "API key pendente";
-    }
-    if (providerTag) {
-      providerTag.textContent = `${providerMeta.label || currentProvider} · ${currentModel || "modelo não definido"}`;
-    }
-    if (testButton) testButton.disabled = state.llmBusy;
-    if (saveButton) saveButton.disabled = state.llmBusy;
-  }
-
-  function buildLlmConfigPayload() {
-    const provider = byId("llmProvider")?.value || "";
-    return {
-      provider,
-      model: currentLlmFormModel(state.llmConfig),
-      base_url: byId("llmBaseUrl")?.value.trim() || "",
-      api_key: byId("llmApiKey")?.value || "",
-    };
-  }
-
-  async function submitLlmConfig(action) {
-    const testing = action === "test";
-    const payloadBody = buildLlmConfigPayload();
-    
-    state.llmBusy = true;
-    const testBtn = byId("btnTestLlmConfig");
-    const saveBtn = byId("btnSaveLlmConfig");
-    if (testBtn) testBtn.disabled = true;
-    if (saveBtn) saveBtn.disabled = true;
-
-    try {
-      const response = await fetch(testing ? "/api/llm-config/test" : "/api/llm-config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payloadBody),
+  function renderIncidents(rows) {
+    const grouped = new Map();
+    for (const event of rows) {
+      const tone = statusTone(event.status);
+      if (tone === "ok") continue;
+      const key = `${event.step || "pipeline"}:${tone}`;
+      grouped.set(key, {
+        tone,
+        title: event.step || "pipeline",
+        body: event.message || statusLabel(event.status),
+        count: (grouped.get(key)?.count || 0) + 1,
       });
-      const payload = await parseResponse(response);
-      if (!response.ok) {
-        throw new Error(payload.error || payload.message || "Falha ao atualizar configuração LLM.");
-      }
-      if (!testing) {
-        state.llmConfig = payload;
-      }
-      showToast(testing ? "Conexão LLM testada com sucesso." : "Configuração LLM salva.", "ok");
+    }
+    const items = Array.from(grouped.values()).sort((a, b) => b.count - a.count).slice(0, 5);
+    setHtml(
+      "incidentList",
+      items.length
+        ? items.map((item) => `<li class="incident-item"><div class="section-head"><strong class="incident-title">${escapeHtml(item.title)}</strong>${statusPill(`${item.count}x`, item.tone)}</div><p class="compact-copy">${escapeHtml(item.body)}</p></li>`).join("")
+        : `<li class="incident-item"><strong class="incident-title">Sem incidentes agrupados</strong><p class="compact-copy">Os eventos recentes não indicam falhas abertas.</p></li>`,
+    );
+  }
+
+  function statCard(label, value, note, tone = "neutral") {
+    return `<article class="stat-card"><div class="stat-top"><span class="mono-label">${escapeHtml(label)}</span>${statusPill(tone, tone)}</div><div class="stat-number">${escapeHtml(value)}</div><p class="stat-note">${escapeHtml(note)}</p></article>`;
+  }
+
+  function renderSources() {
+    const healthById = new Map((operation().feedHealth || []).map((item) => [item.id, item]));
+    const rows = state.feeds.map((feed) => ({ ...feed, ...(healthById.get(feed.id) || {}) }));
+    const filtered = rows
+      .filter((feed) => {
+        const query = state.filters.sources.toLowerCase();
+        return !query || `${feed.name} ${feed.category} ${feed.url}`.toLowerCase().includes(query);
+      })
+      .sort((a, b) => statusRank(a.state || (a.active ? "healthy" : "paused")) - statusRank(b.state || (b.active ? "healthy" : "paused")));
+    const healthy = rows.filter((feed) => (feed.state || (feed.active ? "healthy" : "paused")) === "healthy").length;
+    const degraded = rows.filter((feed) => ["degraded", "stale"].includes(feed.state)).length;
+    const broken = rows.filter((feed) => ["broken", "paused"].includes(feed.state || (feed.active ? "healthy" : "paused"))).length;
+
+    setHtml(
+      "sourceStats",
+      [
+        statCard("Fontes", rows.length, "cadastradas", "neutral"),
+        statCard("Saudáveis", healthy, "RSS e artigo ok", "ok"),
+        statCard("Parciais", degraded, "precisam atenção", degraded ? "warn" : "ok"),
+        statCard("Críticas", broken, "pausadas ou quebradas", broken ? "danger" : "ok"),
+      ].join(""),
+    );
+    setHtml(
+      "sourceRows",
+      filtered.length
+        ? filtered
+            .map((feed) => {
+              const stateName = feed.state || (feed.active ? "healthy" : "paused");
+              const urlLabel = feed.url ? hostname(feed.url) : feed.lastError || "sem URL";
+              return `<article class="source-card"><div class="source-card-header"><div><h4 class="source-card-title">${escapeHtml(feed.name)}</h4><p class="source-card-url">${escapeHtml(urlLabel)}</p></div>${statusPill(statusLabel(stateName), statusTone(stateName))}</div><div style="margin-bottom: -6px;">${miniProgress(feed.healthScore ?? (feed.active ? 100 : 0), statusTone(stateName))}</div><div class="source-card-footer"><span class="mono-label">${escapeHtml(categoryLabel(feed.category))} · ${escapeHtml(feed.minutesSinceFetch !== undefined ? relativeMinutes(feed.minutesSinceFetch) : "--")}</span><button class="small-button" type="button" data-toggle-feed="${feed.id}">${feed.active ? "Pausar" : "Ativar"}</button></div></article>`;
+            })
+            .join("")
+        : `<div class="empty" style="grid-column: 1 / -1;"><h3>Nenhuma fonte encontrada</h3><p>Tente ajustar os filtros de busca.</p></div>`,
+    );
+  }
+
+  function statusRank(status) {
+    const tone = statusTone(status);
+    if (tone === "danger") return 0;
+    if (tone === "warn") return 1;
+    if (tone === "paused") return 2;
+    return 3;
+  }
+
+  function renderArticles() {
+    const rows = articleRows();
+    const filtered = rows.filter((item) => {
+      const query = state.filters.articles.toLowerCase();
+      return !query || `${item.title} ${item.source} ${item.categoryLabel} ${item.command}`.toLowerCase().includes(query);
+    });
+    if (state.selectedArticleIndex >= filtered.length) state.selectedArticleIndex = 0;
+    const selected = filtered[state.selectedArticleIndex];
+    setHtml(
+      "articleStats",
+      [
+        statCard("Itens auditáveis", filtered.length, "derivados dos resumos", "ok"),
+        statCard("Com comando", filtered.filter((item) => item.command).length, "WhatsApp pronto", "ok"),
+        statCard("Com source ids", filtered.filter((item) => item.sourceIds?.length).length, "grounding explícito", "ok"),
+        statCard("Categorias", new Set(filtered.map((item) => item.category)).size, "cobertura editorial", "neutral"),
+      ].join(""),
+    );
+    setHtml(
+      "articleRows",
+      filtered.length
+        ? filtered
+            .map((item, index) => `<div class="feed-item ${index === state.selectedArticleIndex ? 'is-selected' : ''}" data-select-article="${index}"><div class="feed-item-header"><h4 class="feed-item-title">${escapeHtml(item.title)}</h4>${statusPill(confidenceLabel(item.status), statusTone(item.status))}</div><div class="feed-item-meta"><span>${escapeHtml(item.source)}</span><span>·</span><span>${escapeHtml(item.categoryLabel)}</span><span>·</span><span>${escapeHtml(item.time)}</span></div></div>`)
+            .join("")
+        : `<div class="empty" style="margin: 16px;"><h3>Nenhum artigo encontrado</h3><p>Ajuste os filtros ou aguarde uma nova rodada.</p></div>`,
+    );
+    renderArticleDetail(selected);
+  }
+
+  function renderArticleDetail(item) {
+    setHtml(
+      "articleDetail",
+      item
+        ? `<div class="doc-top"><span class="mono-label" style="display: block; margin-bottom: 12px; color: var(--accent);">${escapeHtml(item.categoryLabel)}</span><h4>${escapeHtml(item.title)}</h4></div><p>${escapeHtml(item.card?.insight || item.card?.summaryText || "Nenhum resumo em prosa foi gerado para esta manchete na etapa de síntese. Apenas a chamada de comando está disponível.")}</p><div class="incident-list"><div class="incident-item"><strong class="incident-title">Fonte original (Grounding)</strong><p class="compact-copy">${escapeHtml(item.url || "sem URL vinculada")}</p></div><div class="incident-item"><strong class="incident-title">Comando de envio</strong><p class="mono">${escapeHtml(item.command || "sem command_hint")}</p></div><div class="incident-item"><strong class="incident-title">Metadados</strong><p class="compact-copy">${escapeHtml((item.sourceIds || []).join(", ") || "--")}</p></div></div>`
+        : `<h4>Nenhum artigo selecionado</h4><p>Clique em um item na lista ao lado para ler o resumo gerado e auditar as fontes originais e metadados de execução.</p>`,
+    );
+  }
+
+  function renderSummaries() {
+    const rows = summaryItems().filter((item) => {
+      const query = state.filters.summaries.toLowerCase();
+      return !query || `${item.title} ${item.categoryLabel} ${item.command}`.toLowerCase().includes(query);
+    });
+    renderSummaryCoverage();
+    setHtml(
+      "summaryItems",
+      rows.length
+        ? rows
+            .map((item, index) => `<div class="feed-item" data-select-summary="${index}"><div class="feed-item-header"><h4 class="feed-item-title">${escapeHtml(item.title)}</h4>${statusPill(confidenceLabel(item.status), statusTone(item.status))}</div><div class="feed-item-meta"><span>${escapeHtml(item.categoryLabel)}</span><span>·</span><span style="text-transform: none;">${escapeHtml(item.command || "sem comando")}</span></div></div>`)
+            .join("")
+        : `<div class="empty" style="margin: 16px;"><h3>Nenhum resumo encontrado</h3><p>Não há itens no digest para a janela selecionada.</p></div>`,
+    );
+    const firstCard = cards()[0];
+    setHtml(
+      "summaryPreview",
+      firstCard
+        ? `<div class="doc-top"><span class="mono-label" style="display: block; margin-bottom: 12px; color: var(--accent);">${escapeHtml(firstCard.categoryLabel || "Resumo")}</span><h4>${escapeHtml(firstCard.header || "Sem título do agrupamento")}</h4></div><p>${escapeHtml(firstCard.summaryText || firstCard.insight || "Sem prosa renderizada para o resumo.")}</p><div class="incident-list"><div class="incident-item"><strong class="incident-title">Referências mapeadas</strong><p class="compact-copy">${escapeHtml((firstCard.sourceUrls || []).slice(0, 4).join(" · ") || "sem fonte vinculada")}</p></div><div class="incident-item"><strong class="incident-title">Modelo de IA</strong><p class="compact-copy">${escapeHtml(firstCard.modelUsed || state.llmConfig?.model || "Modelo padrão da plataforma")}</p></div></div>`
+        : `<h4>Digest vazio</h4><p>Aguardando a execução do modelo para gerar uma síntese das notícias mapeadas.</p>`,
+    );
+  }
+
+  function renderSummaryCoverage() {
+    const counts = reading().categoryCounts || {};
+    const entries = Object.entries(counts).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 6);
+    setHtml(
+      "summaryCoverage",
+      entries.length
+        ? entries
+            .map(([category, count]) => `<article class="mini"><span class="mono-label">${escapeHtml(categoryLabel(category))}</span><div class="mini-value">${number(count)}</div><p class="compact-copy">${number(count)} resumo(s) na janela de leitura.</p>${miniProgress(Math.min(100, count * 18), count >= 4 ? "ok" : "warn")}</article>`)
+            .join("")
+        : `<article class="mini"><span class="mono-label">sem resumos</span><div class="mini-value">0</div><p class="compact-copy">Rode uma janela para popular esta aba.</p></article>`,
+    );
+  }
+
+  function renderWhatsapp() {
+    const op = operation();
+    const rows = state.subscribers || [];
+    const active = rows.filter((subscriber) => subscriber.active).length;
+    const connected = op.bridge?.connected === true || op.bridge?.status === "connected";
+    setHtml(
+      "whatsappStats",
+      [
+        statCard("Assinantes", active, "elegíveis para digest", active ? "ok" : "warn"),
+        statCard("Fila", op.pendingSummaryCount || 0, "resumos pendentes", op.pendingSummaryCount ? "warn" : "ok"),
+        statCard("Falhas hoje", op.failedDeliveryCount || 0, "entregas com erro", op.failedDeliveryCount ? "danger" : "ok"),
+        statCard("Bridge", connected ? "ok" : "off", connected ? "conectado" : "offline", connected ? "ok" : "danger"),
+      ].join(""),
+    );
+    setHtml(
+      "subscriberRows",
+      rows.length
+        ? rows
+            .map((subscriber) => {
+              const prefs = subscriber.preferences || {};
+              const type = String(subscriber.phoneNumber || "").includes("@g.us") ? "grupo" : "direto";
+              return `<tr><td><div class="cell-main"><span class="cell-title">${escapeHtml(subscriber.name || subscriber.phoneNumber)}</span><span class="cell-sub">${escapeHtml(subscriber.phoneNumber)}</span></div></td><td>${type}</td><td>${statusPill(subscriber.active ? "ativo" : "pausado", subscriber.active ? "ok" : "paused")}</td><td>${shortDateTime(subscriber.lastSentAt)}</td><td>${escapeHtml(Object.keys(prefs).join(", ") || "padrão")}</td><td><button class="small-button" type="button" data-toggle-subscriber="${subscriber.id}">${subscriber.active ? "Pausar" : "Ativar"}</button></td></tr>`;
+            })
+            .join("")
+        : `<tr><td colspan="6">Nenhum assinante cadastrado.</td></tr>`,
+    );
+    renderBlockers("whatsappBlockers", whatsappBlockers());
+  }
+
+  function whatsappBlockers() {
+    const op = operation();
+    const connected = op.bridge?.connected === true || op.bridge?.status === "connected";
+    const items = [];
+    if (!connected) items.push({ tone: "danger", title: "Bridge offline", body: "O envio periódico fica bloqueado até reconectar." });
+    if (op.failedDeliveryCount) items.push({ tone: "danger", title: "Falhas de entrega", body: `${op.failedDeliveryCount} falha(s) registradas hoje.` });
+    if (!op.subscriberCount) items.push({ tone: "warn", title: "Sem assinantes ativos", body: "Nenhum destinatário elegível para o digest." });
+    if (!items.length) items.push({ tone: "ok", title: "Entrega pronta", body: "Bridge conectado, assinantes ativos e sem falhas abertas." });
+    return items;
+  }
+
+  function renderTimeline(id, items) {
+    setHtml(
+      id,
+      items.length
+        ? items
+            .map((item) => `<li class="event" data-tone="${item.tone}"><span class="event-time">${escapeHtml(item.time || "--")}</span><span class="event-pin"></span><div><strong class="event-title">${escapeHtml(item.title)}</strong><p class="event-detail">${escapeHtml(item.detail)}</p></div>${statusPill(statusLabel(item.tag), item.tone)}</li>`)
+            .join("")
+        : `<li class="event" data-tone="neutral"><span class="event-time">--</span><span class="event-pin"></span><div><strong class="event-title">Sem eventos</strong><p class="event-detail">Nada registrado para a janela atual.</p></div></li>`,
+    );
+  }
+
+  function renderCosts() {
+    const tokensByDate = state.analytics?.tokensByDate || {};
+    const total = Object.values(tokensByDate).reduce((sum, value) => sum + Number(value || 0), 0);
+    const summariesByModel = modelCounts();
+    setHtml(
+      "costStats",
+      [
+        statCard("Tokens 7d", compactNumber(total), "somatório por data", total ? "ok" : "warn"),
+        statCard("Modelo atual", state.llmConfig?.model || "--", state.llmConfig?.provider || "provider", "neutral"),
+        statCard("Fallbacks", fallbackCount(), "sinais de síntese lenta", fallbackCount() ? "warn" : "ok"),
+        statCard("Limite usado", `${tokenUtilization()}%`, "proxy operacional", tokenUtilization() > 75 ? "warn" : "ok"),
+      ].join(""),
+    );
+    setHtml(
+      "tokenBars",
+      Object.entries(tokensByDate).length
+        ? Object.entries(tokensByDate)
+            .map(([date, value]) => bar(date, (Number(value) / Math.max(1, total)) * 100, "ok", compactNumber(value)))
+            .join("")
+        : bar("sem dados", 0, "warn", "0"),
+    );
+    setHtml(
+      "llmRows",
+      cards().length
+        ? cards()
+            .slice(0, 12)
+            .map((card) => `<tr><td>${escapeHtml(card.categoryLabel || categoryLabel(card.category))}</td><td>${escapeHtml(card.modelUsed || state.llmConfig?.model || "--")}</td><td>--</td><td>precificar</td><td>${statusPill(card.approvalStatus || (card.isPending ? "pending" : "sent"), statusTone(card.approvalStatus || (card.isPending ? "pending" : "sent")))}</td><td>${escapeHtml(card.createdAtLabel || "--")}</td></tr>`)
+            .join("")
+        : `<tr><td colspan="6">Sem chamadas LLM recentes no payload.</td></tr>`,
+    );
+    setHtml(
+      "modelBars",
+      summariesByModel.length
+        ? summariesByModel.map(([model, count]) => bar(model, (count / cards().length) * 100, "ok", `${count} resumo(s)`)).join("")
+        : bar(state.llmConfig?.model || "modelo", 0, "warn", "sem resumo"),
+    );
+  }
+
+  function totalTokensLabel() {
+    const total = Object.values(state.analytics?.tokensByDate || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+    return total ? compactNumber(total) : "--";
+  }
+
+  function tokenUtilization() {
+    const total = Object.values(state.analytics?.tokensByDate || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+    if (!total) return 0;
+    return clamp(Math.round((total / 2_000_000) * 100), 1, 100);
+  }
+
+  function fallbackCount() {
+    return cards().filter((card) => String(card.summaryText || card.insight || "").toLowerCase().includes("fallback")).length;
+  }
+
+  function modelCounts() {
+    const counts = new Map();
+    for (const card of cards()) {
+      const model = card.modelUsed || state.llmConfig?.model || "modelo não informado";
+      counts.set(model, (counts.get(model) || 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }
+
+  function renderSettings() {
+    const op = operation();
+    setHtml(
+      "settingsCards",
+      [
+        settingsCard("Workspace", "Operação pessoal / Brasil", [["status", "ativo"], ["multiusuário", "preparado"], ["permissões", "Owner / Editor / Viewer"]]),
+        settingsCard("Horários", "Janelas editoriais", (op.schedule || []).map((item) => [item.periodLabel || item.period, item.timeLabel])),
+        settingsCard("Modelo", state.llmConfig?.model || "não informado", [["provider", state.llmConfig?.provider || "--"], ["base_url", state.llmConfig?.base_url ? "custom" : "padrão"], ["token tracking", "ativo"]]),
+      ].join(""),
+    );
+    setHtml(
+      "activeSettings",
+      [
+        { title: "Timezone", body: op.timezone || state.payload?.timezone || "--" },
+        { title: "Próxima janela", body: op.nextWindow ? `${op.nextWindow.periodLabel} às ${op.nextWindow.timeLabel}` : "--" },
+        { title: "Bridge", body: op.bridge?.status || (op.bridge?.connected ? "connected" : "unknown") },
+        { title: "Última atualização", body: shortDateTime(op.lastUpdatedAt || state.payload?.generatedAt) },
+      ]
+        .map((item) => `<div class="incident-item"><strong class="incident-title">${escapeHtml(item.title)}</strong><p class="compact-copy">${escapeHtml(item.body)}</p></div>`)
+        .join(""),
+    );
+  }
+
+  function settingsCard(title, value, rows) {
+    return `<article class="settings-card"><span class="mono-label">${escapeHtml(title)}</span><strong class="setting-title">${escapeHtml(value)}</strong>${rows
+      .slice(0, 4)
+      .map(([label, content]) => `<div class="setting-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(content)}</strong></div>`)
+      .join("")}</article>`;
+  }
+
+  function renderAll() {
+    renderShell();
+    renderOverview();
+    renderPipeline();
+    renderEvents();
+    renderSources();
+    renderArticles();
+    renderSummaries();
+    renderWhatsapp();
+    renderCosts();
+    renderSettings();
+    setTab(state.activeTab);
+    updateCountdown();
+  }
+
+  function updateCountdown() {
+    const next = operation().nextWindow;
+    const date = parseDate(next?.scheduledAt);
+    if (!date) return;
+    const diff = Math.max(0, date.getTime() - Date.now());
+    const hours = Math.floor(diff / 3_600_000);
+    const minutes = Math.floor((diff % 3_600_000) / 60_000);
+    const suffix = diff > 0 ? `em ${hours}h ${minutes.toString().padStart(2, "0")}m` : "agora";
+    setText("tickerNext", `${next.timeLabel} · ${next.periodLabel} · ${suffix}`);
+  }
+
+  async function runPipelineNow() {
+    const button = byId("btnRunNow");
+    const period = operation().nextWindow?.period || latestRun()?.period || "morning";
+    setButtonLoading(button, true);
+    try {
+      const response = await fetch(`/run-pipeline/${encodeURIComponent(period)}`, { method: "POST", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const payload = await response.json();
+      showToast(`Pipeline ${period} iniciado: ${payload.run_id || payload.status || "ok"}.`, "ok");
+      await loadData({ quiet: true });
     } catch (error) {
-      showToast(error.message, "danger");
+      showToast(`Falha ao iniciar pipeline: ${error.message}`, "danger");
     } finally {
-      state.llmBusy = false;
-      if (testBtn) testBtn.disabled = false;
-      if (saveBtn) saveBtn.disabled = false;
-      if (!testing) {
-        renderLlmConfig();
-      }
+      setButtonLoading(button, false);
     }
   }
 
-  function render() {
-    renderTopbar();
-    renderOperation();
-    renderReading();
-    renderSubscribers();
-    renderFeeds();
-    renderAnalytics();
-    renderLlmConfig();
-    updateClock();
-  }
-
-  async function fetchLlmConfig() {
+  async function runLast24Preview() {
+    const button = byId("btn-last24h");
+    setButtonLoading(button, true);
     try {
-      const response = await fetch("/api/llm-config", { headers: { Accept: "application/json" } });
-      const payload = await parseResponse(response);
-      if (!response.ok) {
-        throw new Error(payload.error || payload.message || "Falha ao carregar configuração LLM.");
-      }
-      state.llmConfig = payload;
-      renderLlmConfig();
+      const response = await fetch("/api/run-pipeline/last-24h", { method: "POST", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const payload = await response.json();
+      showToast(`Prévia fiel da mensagem gerada: ${payload.summaryCount || 0} resumo(s).`, "ok");
+      await loadData({ quiet: true });
     } catch (error) {
-      console.debug(error);
-      showToast("Erro ao carregar configuração LLM.", "danger");
-    }
-  }
-
-  async function fetchSubscribers() {
-    try {
-      const response = await fetch("/api/subscribers", { headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error("Falha ao carregar assinantes.");
-      state.subscribers = await response.json();
-      renderSubscribers();
-    } catch (error) {
-      console.debug(error);
-      showToast("Erro ao listar assinantes.", "danger");
-    }
-  }
-
-  async function toggleSubscriber(id) {
-    try {
-      const response = await fetch(`/api/subscribers/${id}/toggle`, { method: "POST" });
-      if (!response.ok) throw new Error("Falha ao alterar assinante.");
-      await fetchSubscribers();
-      showToast("Status alterado com sucesso.", "ok");
-    } catch (error) {
-      showToast(error.message, "danger");
-    }
-  }
-
-  async function fetchFeeds() {
-    try {
-      const response = await fetch("/api/feeds", { headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error("Falha ao carregar fontes.");
-      state.feeds = await response.json();
-      renderFeeds();
-    } catch (error) {
-      console.debug(error);
-      showToast("Erro ao listar fontes.", "danger");
+      showToast(`Falha ao gerar prévia 24h: ${error.message}`, "danger");
+    } finally {
+      setButtonLoading(button, false);
     }
   }
 
   async function toggleFeed(id) {
     try {
-      const response = await fetch(`/api/feeds/${id}/toggle`, { method: "POST" });
-      if (!response.ok) throw new Error("Falha ao alterar fonte.");
-      await fetchFeeds();
-      showToast("Status da fonte alterado.", "ok");
+      await fetchJson(`/api/feeds/${encodeURIComponent(id)}/toggle`, { method: "POST" });
     } catch (error) {
-      showToast(error.message, "danger");
-    }
-  }
-
-  async function approveSummary(id) {
-    try {
-      const response = await fetch(`/api/summaries/${id}/approve`, { method: "POST" });
-      if (!response.ok) throw new Error("Falha ao aprovar resumo.");
-      showToast("Resumo aprovado com sucesso.", "ok");
-      await fetchDashboard();
-    } catch (error) {
-      showToast(error.message, "danger");
-    }
-  }
-
-  let charts = {
-    categories: null,
-    tokens: null,
-  };
-
-  function renderAnalytics() {
-    byId("view-analytics")?.classList.toggle("active", state.view === "analytics");
-    if (state.view !== "analytics") return;
-
-    if (!state.analytics) {
+      showToast(`Falha ao alternar fonte: ${error.message}`, "danger");
       return;
     }
+    showToast("Fonte atualizada.", "ok");
+    await loadData({ quiet: true });
+  }
 
-    const canvasCat = byId("chartCategories");
-    const canvasTok = byId("chartTokens");
-    if (!canvasCat || !canvasTok) return;
+  async function toggleSubscriber(id) {
+    const response = await fetch(`/api/subscribers/${encodeURIComponent(id)}/toggle`, { method: "POST", headers: { Accept: "application/json" } });
+    if (!response.ok) {
+      showToast(`Falha ao alternar assinante: ${response.statusText}`, "danger");
+      return;
+    }
+    showToast("Assinante atualizado.", "ok");
+    await loadData({ quiet: true });
+  }
 
-    const ctxCat = canvasCat.getContext("2d");
-    const ctxTok = canvasTok.getContext("2d");
+  function exportCsv() {
+    const rows = summaryItems();
+    const header = ["categoria", "manchete", "command_hint", "status", "source_article_ids"];
+    const csv = [
+      header.join(","),
+      ...rows.map((row) =>
+        [row.categoryLabel, row.title, row.command, row.status, (row.sourceIds || []).join("|")]
+          .map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`)
+          .join(","),
+      ),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `mesa-dashboard-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
-    if (charts.categories) charts.categories.destroy();
-    if (charts.tokens) charts.tokens.destroy();
-
-    const catData = state.analytics.articlesByCategory || {};
-    charts.categories = new Chart(ctxCat, {
-      type: "doughnut",
-      data: {
-        labels: Object.keys(catData).map(c => displayCategoryLabel(c)),
-        datasets: [{
-          data: Object.values(catData),
-          backgroundColor: ["#f59e0b", "#10b981", "#3b82f6", "#ef4444", "#8b5cf6"],
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: "bottom" } }
+  function wireEvents() {
+    all("[data-tab]").forEach((button) => button.addEventListener("click", () => setTab(button.dataset.tab)));
+    document.addEventListener("click", (event) => {
+      const switchTab = event.target.closest("[data-switch-tab]");
+      if (switchTab) setTab(switchTab.dataset.switchTab);
+      const feed = event.target.closest("[data-toggle-feed]");
+      if (feed) toggleFeed(feed.dataset.toggleFeed);
+      const subscriber = event.target.closest("[data-toggle-subscriber]");
+      if (subscriber) toggleSubscriber(subscriber.dataset.toggleSubscriber);
+      const article = event.target.closest("[data-select-article]");
+      if (article) {
+        state.selectedArticleIndex = Number(article.dataset.selectArticle) || 0;
+        renderArticles();
       }
     });
-
-    const tokData = state.analytics.tokensByDate || {};
-    charts.tokens = new Chart(ctxTok, {
-      type: "line",
-      data: {
-        labels: Object.keys(tokData),
-        datasets: [{
-          label: "Tokens Consumidos",
-          data: Object.values(tokData),
-          borderColor: "#3b82f6",
-          tension: 0.3,
-          fill: true,
-          backgroundColor: "rgba(59, 130, 246, 0.1)"
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: { y: { beginAtZero: true } }
-      }
+    byId("headlinePrev")?.addEventListener("click", () => {
+      const length = summaryItems().length || 1;
+      state.headlineIndex = (state.headlineIndex - 1 + length) % length;
+      renderHeadlineCarousel();
     });
-  }
-
-  async function fetchAnalytics() {
-    try {
-      const response = await fetch("/api/analytics", { headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error("Falha ao carregar métricas.");
-      state.analytics = await response.json();
-      renderAnalytics();
-    } catch (error) {
-      console.debug(error);
-      showToast("Erro ao listar métricas.", "danger");
-    }
-  }
-
-  async function parseResponse(response) {
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      return response.json();
-    }
-    return { message: await response.text() };
-  }
-
-  async function fetchDashboard() {
-    state.loading = true;
-    render();
-
-    try {
-      const response = await fetch("/api/dashboard", {
-        headers: { Accept: "application/json" },
+    byId("headlineNext")?.addEventListener("click", () => {
+      const length = summaryItems().length || 1;
+      state.headlineIndex = (state.headlineIndex + 1) % length;
+      renderHeadlineCarousel();
+    });
+    byId("btnRunNow")?.addEventListener("click", runPipelineNow);
+    byId("btn-last24h")?.addEventListener("click", runLast24Preview);
+    byId("btnOpenQueue")?.addEventListener("click", () => setTab("whatsapp"));
+    byId("btnExportCsv")?.addEventListener("click", exportCsv);
+    byId("btnCommand")?.addEventListener("click", () => byId("navSearch")?.focus());
+    byId("btnRefreshPipeline")?.addEventListener("click", () => loadData({ quiet: false }));
+    byId("btnRefreshSources")?.addEventListener("click", () => loadData({ quiet: false }));
+    byId("btnRefreshSubscribers")?.addEventListener("click", () => loadData({ quiet: false }));
+    byId("btnClearEventSearch")?.addEventListener("click", () => {
+      state.filters.events = "";
+      if (byId("eventSearch")) byId("eventSearch").value = "";
+      renderEvents();
+    });
+    byId("btnCopySummary")?.addEventListener("click", async () => {
+      const text = cards()[0]?.summaryText || "";
+      if (!text) {
+        showToast("Não há resumo para copiar.", "warn");
+        return;
+      }
+      await navigator.clipboard?.writeText(text);
+      showToast("Preview do resumo copiado.", "ok");
+    });
+    byId("navSearch")?.addEventListener("input", (event) => {
+      state.filters.nav = event.target.value.toLowerCase();
+      all("[data-tab]").forEach((button) => {
+        const text = button.textContent.toLowerCase();
+        button.hidden = Boolean(state.filters.nav) && !text.includes(state.filters.nav);
       });
-      const payload = await parseResponse(response);
-
-      if (!response.ok) {
-        throw new Error(payload.error || payload.message || payload.detail || "Não foi possível carregar a dashboard.");
-      }
-
-      state.payload = payload;
-      ensureValidState();
-      state.loading = false;
-      render();
-    } catch (error) {
-      state.loading = false;
-      render();
-      showToast(error.message || "Falha ao carregar dashboard.", "danger");
-    }
-  }
-
-  async function runManualAction(period) {
-    if (period === "last24h") {
-      try {
-        const response = await fetch("/api/digest-preview/morning");
-        const payload = await parseResponse(response);
-        if (!response.ok) {
-          throw new Error(payload.error || payload.detail || "Falha ao gerar prévia.");
-        }
-        showToast(`Prévia WhatsApp: ${payload.summaryCount} resumos, ${payload.partCount} parte(s), ${payload.charCount} caracteres.`, "ok");
-      } catch (error) {
-        showToast(error.message || "Falha ao gerar prévia.", "danger");
-      }
-      return;
-    }
-
-    const endpoint = period === "retry" ? "/api/retry-delivery/today" : `/run-pipeline/${period}`;
-
-    try {
-      const response = await fetch(endpoint, { method: "POST" });
-      const payload = await parseResponse(response);
-
-      if (!response.ok) {
-        throw new Error(payload.error || payload.message || payload.detail || "Falha ao executar a ação.");
-      }
-
-      const requestLabel = payload.run_id ? ` · ${payload.run_id}` : "";
-      showToast(`${payload.message || "Ação executada."}${requestLabel}`, "ok");
-      window.setTimeout(fetchDashboard, 900);
-    } catch (error) {
-      showToast(error.message || "Falha ao executar a ação.", "danger");
-    }
-  }
-
-  function focusSection(id) {
-    if (state.view !== "ops") {
-      setView("ops");
-    }
-
-    window.setTimeout(() => {
-      byId(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 40);
-  }
-
-  function toggleSetEntry(setRef, value) {
-    if (setRef.has(value)) {
-      setRef.delete(value);
-    } else {
-      setRef.add(value);
-    }
-  }
-
-  function handleUiAction(action) {
-    if (!action) return;
-
-    if (action === "view:reading") {
-      setView("reading");
-      return;
-    }
-
-    if (action === "reading:pending") {
-      state.currentDate = "all";
-      state.filters.statuses = new Set(["pending"]);
-      state.view = "reading";
-      savePreferences();
-      render();
-      return;
-    }
-
-    if (action.startsWith("focus:")) {
-      focusSection(action.replace("focus:", ""));
-    }
-  }
-
-  function handleFilterClick(event) {
-    const button = event.target.closest("[data-filter-kind]");
-    if (!button) return;
-
-    const kind = button.dataset.filterKind;
-    const value = button.dataset.filterValue;
-
-    if (kind === "sort") {
-      state.filters.sort = value === "oldest" ? "oldest" : "newest";
-    }
-    if (kind === "period") {
-      toggleSetEntry(state.filters.periods, value);
-    }
-    if (kind === "status") {
-      toggleSetEntry(state.filters.statuses, value);
-    }
-    if (kind === "source") {
-      state.filters.sourceMin = Number(value || 0);
-    }
-    if (kind === "insight") {
-      state.filters.insightOnly = !state.filters.insightOnly;
-    }
-
-    savePreferences();
-    render();
-  }
-
-  function bindEvents() {
-    byId("nav-ops")?.addEventListener("click", () => setView("ops"));
-    byId("nav-reading")?.addEventListener("click", () => setView("reading"));
-    byId("nav-subscribers")?.addEventListener("click", () => {
-      setView("subscribers");
-      fetchSubscribers();
     });
-    byId("nav-feeds")?.addEventListener("click", () => {
-      setView("feeds");
-      fetchFeeds();
+    byId("eventSearch")?.addEventListener("input", (event) => {
+      state.filters.events = event.target.value;
+      renderEvents();
     });
-    byId("nav-analytics")?.addEventListener("click", () => {
-      setView("analytics");
-      fetchAnalytics();
+    byId("sourceSearch")?.addEventListener("input", (event) => {
+      state.filters.sources = event.target.value;
+      renderSources();
     });
-    byId("nav-llm-config")?.addEventListener("click", () => {
-      setView("llm-config");
-      fetchLlmConfig();
+    byId("articleSearch")?.addEventListener("input", (event) => {
+      state.filters.articles = event.target.value;
+      renderArticles();
     });
-    byId("btnThemeToggle")?.addEventListener("click", () => {
-      applyTheme(state.theme === "dark" ? "light" : "dark");
-      renderThemeToggle();
-    });
-    byId("btnRefresh")?.addEventListener("click", fetchDashboard);
-    byId("btnApproveSummary")?.addEventListener("click", () => {
-      const id = byId("btnApproveSummary").dataset.approveId;
-      if (id) approveSummary(id);
-    });
-    byId("btn-retry")?.addEventListener("click", () => runManualAction("retry"));
-    byId("btn-last24h")?.addEventListener("click", () => runManualAction("last24h"));
-    byId("drawerClose")?.addEventListener("click", hideDrawer);
-    byId("drawerBackdrop")?.addEventListener("click", hideDrawer);
-    byId("btn-clearFilters")?.addEventListener("click", clearFilters);
-    byId("llmProvider")?.addEventListener("change", (event) => {
-      if (!state.llmConfig) return;
-      state.llmConfig = { ...state.llmConfig, provider: event.target.value };
-      renderLlmConfig();
-    });
-    byId("llmModelPreset")?.addEventListener("change", (event) => {
-      const custom = byId("llmModelCustom");
-      if (custom && event.target.value) {
-        custom.value = "";
-      }
-    });
-    byId("btnTestLlmConfig")?.addEventListener("click", () => submitLlmConfig("test"));
-    byId("btnSaveLlmConfig")?.addEventListener("click", () => submitLlmConfig("save"));
-
-    document.querySelectorAll("[data-pipeline-period]").forEach((button) => {
-      button.addEventListener("click", () => runManualAction(button.dataset.pipelinePeriod));
-    });
-
-    byId("searchInput")?.addEventListener("input", (event) => {
-      state.filters.search = event.target.value || "";
-      savePreferences();
-      render();
-    });
-
-    byId("dateNav")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-date]");
-      if (!button) return;
-      state.currentDate = button.dataset.date || "all";
-      savePreferences();
-      render();
-    });
-
-    byId("sortControl")?.addEventListener("click", handleFilterClick);
-    byId("periodControl")?.addEventListener("click", handleFilterClick);
-    byId("statusControl")?.addEventListener("click", handleFilterClick);
-    byId("sourceControl")?.addEventListener("click", handleFilterClick);
-
-    byId("metricsRow")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-metric-action]");
-      if (!button) return;
-      handleUiAction(button.dataset.metricAction);
-    });
-
-    byId("view-ops")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-quick-action]");
-      if (!button) return;
-      handleUiAction(button.dataset.quickAction);
-    });
-
-    byId("summaries")?.addEventListener("click", (event) => {
-      const card = event.target.closest("[data-card-id]");
-      if (!card) return;
-      const rawId = card.dataset.cardId;
-      const cardId = Number.isNaN(Number(rawId)) ? rawId : Number(rawId);
-      openDrawer(cardId);
-    });
-
-    byId("subscribersList")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-toggle-subscriber]");
-      if (!button) return;
-      const subId = button.dataset.toggleSubscriber;
-      if (subId) toggleSubscriber(subId);
-    });
-
-    byId("feedsList")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-toggle-feed]");
-      if (!button) return;
-      const feedId = button.dataset.toggleFeed;
-      if (feedId) toggleFeed(feedId);
-    });
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && state.drawer.open) {
-        hideDrawer();
-      }
+    byId("summarySearch")?.addEventListener("input", (event) => {
+      state.filters.summaries = event.target.value;
+      renderSummaries();
     });
   }
 
-  loadThemePreference();
-  loadPreferences();
-  startClock();
-  bindEvents();
-  render();
-  fetchDashboard();
-  fetchLlmConfig();
-  window.setInterval(fetchDashboard, AUTO_REFRESH_MS);
+  function init() {
+    wireEvents();
+    setTab("overview");
+    loadData({ quiet: true });
+    state.refreshTimer = window.setInterval(() => loadData({ quiet: true }), AUTO_REFRESH_MS);
+    state.countdownTimer = window.setInterval(updateCountdown, 1000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
